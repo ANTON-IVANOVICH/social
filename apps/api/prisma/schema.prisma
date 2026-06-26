@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
+  LAUGH
+  WOW
+  SAD
+}
+
+enum PostVisibility {
+  PUBLIC
+  FOLLOWERS
+  PRIVATE
+}
+
+enum NotificationKind {
+  FOLLOW
+  REACTION
+  COMMENT
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  username     String   @unique
+  passwordHash String
+  role         UserRole @default(USER)
+  isActive     Boolean  @default(true)
+  displayName  String?
+  bio          String?
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  posts     Post[]
+  comments  Comment[]
+  reactions Reaction[]
+
+  // граф подписок: following — на кого подписан я; followers — кто подписан на меня
+  following Follow[] @relation("FollowFollower")
+  followers Follow[] @relation("FollowFollowing")
+
+  receivedNotifications Notification[] @relation("NotificationRecipient")
+  actedNotifications    Notification[] @relation("NotificationActor")
+  refreshTokens         RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique // храним ХЕШ токена, не сам токен
+  expiresAt DateTime
+  revokedAt DateTime? // отзыв вместо удаления — для аудита
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model Post {
+  id         String         @id @default(uuid()) @db.Uuid
+  content    String
+  visibility PostVisibility @default(PUBLIC)
+  authorId   String         @db.Uuid
+  author     User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  comments      Comment[]
+  reactions     Reaction[]
+  hashtags      PostHashtag[]
+  notifications Notification[]
+
+  // составной индекс под ленту автора и под общую ленту по свежести
+  @@index([authorId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("posts")
+}
+
+model Comment {
+  id        String   @id @default(uuid()) @db.Uuid
+  content   String
+  postId    String   @db.Uuid
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String   @db.Uuid
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([postId, createdAt])
+  @@map("comments")
+}
+
+model Reaction {
+  id        String       @id @default(uuid()) @db.Uuid
+  type      ReactionType
+  postId    String       @db.Uuid
+  post      Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String       @db.Uuid
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  // один пользователь — одна реакция на пост (поменять можно, две поставить — нет)
+  @@unique([postId, userId])
+  @@index([postId])
+  @@map("reactions")
+}
+
+model Follow {
+  followerId  String   @db.Uuid
+  follower    User     @relation("FollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  followingId String   @db.Uuid
+  following   User     @relation("FollowFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@id([followerId, followingId]) // составной ключ — нельзя подписаться дважды
+  @@index([followingId])
+  @@map("follows")
+}
+
+model Hashtag {
+  id    String        @id @default(uuid()) @db.Uuid
+  tag   String        @unique
+  posts PostHashtag[]
+
+  @@map("hashtags")
+}
+
+model PostHashtag {
+  postId    String  @db.Uuid
+  post      Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtagId String  @db.Uuid
+  hashtag   Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@map("post_hashtags")
+}
+
+model Notification {
+  id          String           @id @default(uuid()) @db.Uuid
+  recipientId String           @db.Uuid
+  recipient   User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actorId     String           @db.Uuid
+  actor       User             @relation("NotificationActor", fields: [actorId], references: [id], onDelete: Cascade)
+  kind        NotificationKind
+  postId      String?          @db.Uuid
+  post        Post?            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  read        Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+
+  @@index([recipientId, createdAt(sort: Desc)])
+  @@map("notifications")
+}

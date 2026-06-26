@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2023",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": false,
+    "removeComments": true,
+    "sourceMap": true,
+    "incremental": true,
+    // tsbuildinfo держим ВНУТРИ dist, чтобы deleteOutDir (nest-cli.json) чистил его
+    // вместе со сборкой. Иначе устаревший tsbuildinfo заставляет tsc пропускать
+    // эмит, а dist остаётся пустым после первой сборки.
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
+    "skipLibCheck": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "esModuleInterop": true,
+    // strict: true остаётся, но strictPropertyInitialization выключаем — поля
+    // декораторных классов (@ObjectType/@Field, @InputType, ORM-entity) не имеют
+    // инициализатора по дизайну. Это дефолт самого Nest CLI.
+    "strictPropertyInitialization": false
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

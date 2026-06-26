@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // ts-jest транспилирует пофайлово (без сквозной проверки типов) — это снимает
+    // ложный CJS/ESM-конфликт типов @apollo/server, который всплывает только под
+    // ts-jest. Полную проверку типов тестов делает `yarn typecheck` (вторым прогоном
+    // tsc по этому конфигу — там isolatedModules лишь добавляет ограничения, но тип-
+    // чек идёт). rootDir расширяем до корня, иначе test/* вне rootDir исходников.
+    "isolatedModules": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

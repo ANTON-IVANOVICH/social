@@ -1,0 +1,28 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "start": {
+      // `nest start` сам компилирует из исходников (и с deleteOutDir чистит dist),
+      // поэтому зависимость от build тут не нужна — это был бы двойной компайл.
+      "cache": false,
+      "persistent": true
+    },
+    "start:prod": {
+      // прод-запуск из готового dist (node dist/main.js) — вот здесь build обязателен.
+      "dependsOn": ["build"],
+      "cache": false,
+      "persistent": true
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    }
+  }
+}
