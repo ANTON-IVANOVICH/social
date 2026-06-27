@@ -11,7 +11,7 @@ export class FollowsService {
   ) {}
 
   // Подписка + уведомление — атомарно. Уведомление пока пишем синхронно;
-  // на этапе 5 это уедет в доменное событие + очередь (fan-out).
+  // позже это уедет в доменное событие + очередь (fan-out).
   async follow(followerId: string, followingId: string): Promise<boolean> {
     if (followerId === followingId) {
       throw new BadRequestException("Нельзя подписаться на самого себя");
@@ -42,7 +42,7 @@ export class FollowsService {
     return true;
   }
 
-  // id тех, на кого подписан пользователь — понадобится для ленты на этапе 3
+  // id тех, на кого подписан пользователь — для персонализированной ленты
   async followingIds(userId: string): Promise<string[]> {
     const rows = await this.prisma.follow.findMany({
       where: { followerId: userId },

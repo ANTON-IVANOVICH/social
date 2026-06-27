@@ -9,7 +9,7 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <div className="p-6">Лента появится на Этапе 2</div>,
+        element: <div className="p-6">Здесь будет лента</div>,
       },
       { path: "u/:username", element: <ProfilePage /> },
     ],
@@ -17,7 +17,7 @@ export const router = createBrowserRouter([
 ]);
 
 function ProfilePage() {
-  // полноценный экран профиля — на Этапе 2; пока демонстрация типизированного запроса
+  // полноценный экран профиля — позже; пока демонстрация типизированного запроса
   const { username } = useParams<{ username: string }>();
   return <ProfileCard username={username ?? ""} />;
 }

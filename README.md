@@ -18,32 +18,32 @@ social-platform/
 └── .yarnrc.yml       # nodeLinker: node-modules
 ```
 
-Реализованы **Этапы 1–4** бэкенда (`apps/api`):
+## Что реализовано
 
-- **Этап 1 — каркас:** GraphQL (Apollo, code-first), валидация конфигурации, Pino-логи,
+### Бэкенд (`apps/api`)
+
+- **GraphQL-каркас:** Apollo (code-first), валидация конфигурации, Pino-логи,
   health (GraphQL + REST), graceful shutdown, глобальный exception-фильтр, лимит глубины запросов.
-- **Этап 2 — доменное ядро:** PostgreSQL через **Prisma 6**, модели `User/Post/Comment/Reaction/
-  Follow/Notification/Hashtag`, миграции, курсорная лента, интерактивные транзакции,
-  **DataLoader** против N+1, полиморфные уведомления (`InterfaceType`) и разнородная лента (`UnionType`).
-- **Этап 3 — аутентификация и защита:** регистрация/логин (**argon2id**, защита от timing-attack),
+- **Доменное ядро:** PostgreSQL через **Prisma 6**, модели `User/Post/Comment/Reaction/Follow/
+  Notification/Hashtag`, миграции, курсорная лента, интерактивные транзакции, **DataLoader**
+  против N+1, полиморфные уведомления (`InterfaceType`) и разнородная лента (`UnionType`).
+- **Аутентификация и безопасность:** регистрация/логин (**argon2id**, защита от timing-attack),
   **JWT** + refresh-токены с **ротацией** и reuse-detection (хеш в БД), refresh в **httpOnly-cookie**,
   `@CurrentUser`/`@Auth` + `GqlAuthGuard`, **RBAC** (`RolesGuard`), `PostOwnerGuard`, персонализированная
   лента подписок, поле `myReaction`, rate-limiting (`GqlThrottlerGuard` + `@Throttle`), валидация
-  `JWT_SECRET`, **e2e-тесты** auth-флоу (Jest + supertest).
-- **Этап 4 — реальное время:** **GraphQL Subscriptions** на `graphql-ws` с аутентификацией через
+  `JWT_SECRET`, быстрый **denylist** отозванных refresh-токенов (fail-open), **e2e-тесты** auth-флоу.
+- **Реальное время:** **GraphQL Subscriptions** на `graphql-ws` с аутентификацией через
   `connectionParams` в `onConnect` (один раз на соединение); единый `context` для HTTP и WS
   (`@CurrentUser` и DataLoader работают и в подписках); **Redis** (`ioredis`) + `RedisPubSub` для
   масштабирования подписок между инстансами; события `postAdded`/`reactionAdded`/`commentAdded`/
   `newNotification`, два паттерна фильтрации (по подписчику и по аргументу `postId`); **presence**
-  (счётчик соединений в Redis) и эфемерный **typing**; throttler на **shared Redis-хранилище**;
-  быстрый **denylist** отозванных refresh-токенов (fail-open); GraphQL-aware `LoggingInterceptor`.
-  Доработки перед Этапом 5: **e2e-тесты подписок** на реальном `graphql-ws`-клиенте
-  (`test/subscriptions.e2e-spec.ts`) и **heartbeat** для мёртвых коннектов — TTL на
-  presence-ключах, продлеваемый фоновым sweeper'ом (онлайн-статус самозалечивается
-  при жёстком крахе процесса; зависшие сокеты рвёт WS-keepAlive graphql-ws).
+  (счётчик соединений в Redis, TTL + heartbeat-sweeper) и эфемерный **typing**; throttler на
+  **shared Redis-хранилище**; GraphQL-aware `LoggingInterceptor`; **e2e-тесты подписок** на
+  реальном `graphql-ws`-клиенте (`test/subscriptions.e2e-spec.ts`).
 
-Реализован **Этап 1** фронтенда (`apps/web`) — каркас, подключённый к бэкенду **без
-изменения его кода** (только origin в CORS, в dev открыт):
+### Фронтенд (`apps/web`)
+
+Каркас, подключённый к бэкенду **без изменения его кода** (только origin в CORS, в dev открыт):
 
 - **Vite 8 + React 19 + React Compiler 1.0** (через `@vitejs/plugin-react` v6 +
   `@rolldown/plugin-babel` + `reactCompilerPreset` — авто-мемоизация, бейдж «Memo ✨»),
@@ -51,10 +51,12 @@ social-platform/
 - **HeroUI v3 + Tailwind v4** без Provider (тема через CSS-переменные, компаунд-компоненты
   `Card.Header`/`Avatar.Image`, React Aria `onPress`/`isDisabled`), тёмная тема классом на корне.
 - **Apollo Client 4**: раздельные импорты ядра (`@apollo/client`) и React-биндингов
-  (`@apollo/client/react`), `HttpLink` → `/graphql`, нормализованный `InMemoryCache`.
+  (`@apollo/client/react`), `HttpLink` → `/graphql`, нормализованный `InMemoryCache` с field policy
+  для курсорной ленты (`feed`: `keyArgs:[]` + `merge`).
 - **GraphQL Code Generator** (client-preset) по `apps/api/src/schema.gql` — типизированный
-  `graphql()` + fragment masking; роутинг React Router 7; первый типизированный `useQuery`
+  `graphql()` + fragment masking; роутинг React Router 7; типизированный `useQuery`
   (публичный профиль `user(username)`), рендерящий данные из NestJS.
+- **Граница маршрута:** `<Suspense>` + error-boundary вокруг `<Outlet>` (фундамент под suspense-хуки).
 
 ## Быстрый старт
 
@@ -87,7 +89,7 @@ yarn dev                       # через Turborepo: api (:3000) + web (:5173)
 > `http://localhost:5173`; страница профиля — `http://localhost:5173/u/bob` (создайте
 > `bob` мутацией `register`). CORS в dev открыт — правок бэкенда не нужно.
 
-Откройте `http://localhost:3000/graphql` — Apollo Sandbox. Пример сценария (Этап 3 — за auth):
+Откройте `http://localhost:3000/graphql` — Apollo Sandbox. Пример сценария (за auth):
 
 ```graphql
 # 1. регистрация + логин (получаем accessToken/refreshToken)
@@ -104,7 +106,7 @@ query { feed(limit: 10) {                                                       
 
 REST-проба для оркестраторов: `curl http://localhost:3000/health`.
 
-**Подписки (Этап 4).** В Apollo Sandbox откройте Connection settings → Subscriptions и задайте
+**Подписки.** В Apollo Sandbox откройте Connection settings → Subscriptions и задайте
 `connectionParams`: `{ "authorization": "Bearer <accessToken>" }` (для WS токен едет здесь, а не в Headers).
 
 ```graphql

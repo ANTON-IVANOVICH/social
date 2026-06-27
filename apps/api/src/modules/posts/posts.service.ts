@@ -56,7 +56,7 @@ export class PostsService {
 
     // публикуем ПОСЛЕ коммита транзакции (внутри tx нельзя — событие ушло бы до
     // фиксации). «Лучшими усилиями»: падение между commit и publish теряет событие,
-    // но пост уже в БД и придёт через query feed. Гарантию даст outbox на этапе 5+.
+    // но пост уже в БД и придёт через query feed. Гарантию даст outbox-паттерн позже.
     await this.pubsub.publish("postAdded", { postAdded: post, authorId });
     return post;
   }
@@ -72,7 +72,7 @@ export class PostsService {
     });
   }
 
-  // Общая лента по свежести. На этапе 3 заменим на ленту подписок текущего юзера.
+  // Общая публичная лента по свежести (используется в discover).
   async feedGlobal(limit: number, cursor?: string) {
     const decoded = cursor ? decodeCursor(cursor) : null;
 
@@ -92,7 +92,7 @@ export class PostsService {
     return { items, nextCursor };
   }
 
-  // Персонализированная лента: посты подписок + свои (Этап 3, за auth-guard'ом)
+  // Персонализированная лента: посты подписок + свои (за auth-guard'ом)
   async feedForUser(userId: string, limit: number, cursor?: string) {
     const followingIds = await this.follows.followingIds(userId);
     const authorIds = [...followingIds, userId]; // подписки + свои посты

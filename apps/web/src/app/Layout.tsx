@@ -1,9 +1,13 @@
-import { Link, Outlet } from "react-router";
+import { Suspense } from "react";
+import { Link, Outlet, useLocation } from "react-router";
 import { Button } from "@heroui/react";
 import { useTheme } from "../shared/theme/useTheme";
+import { ErrorBoundary } from "../shared/ui/ErrorBoundary";
+import { RouteFallback } from "../shared/ui/RouteFallback";
 
 export function Layout() {
   const { theme, toggle } = useTheme();
+  const location = useLocation();
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="flex items-center justify-between border-b px-6 py-3">
@@ -16,7 +20,13 @@ export function Layout() {
         </Button>
       </header>
       <main>
-        <Outlet />
+        {/* Единая граница загрузки/ошибок маршрута — фундамент под suspense-хуки.
+            key по пути сбрасывает границу ошибок при навигации. */}
+        <ErrorBoundary key={location.pathname}>
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet />
+          </Suspense>
+        </ErrorBoundary>
       </main>
     </div>
   );

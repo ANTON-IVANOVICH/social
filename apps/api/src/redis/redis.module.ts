@@ -45,7 +45,7 @@ export class RedisModule implements OnApplicationShutdown {
   ) {}
 
   async onApplicationShutdown(): Promise<void> {
-    // graceful shutdown: закрываем коннекты (работает с enableShutdownHooks из Этапа 1)
+    // graceful shutdown: закрываем коннекты (работает с enableShutdownHooks)
     await Promise.allSettled([
       this.client.quit(),
       this.pub.quit(),

@@ -87,7 +87,7 @@ interface GraphqlWsContext {
       }),
     }),
 
-    // ── инфраструктура реального времени (Этап 4) ──
+    // ── инфраструктура реального времени ──
     RedisModule, // @Global: REDIS_CLIENT + пара pub/sub
     PubSubModule, // @Global: PUB_SUB (RedisPubSub) для подписок между инстансами
 
@@ -116,7 +116,7 @@ interface GraphqlWsContext {
               ? ApolloServerPluginLandingPageDisabled()
               : ApolloServerPluginLandingPageLocalDefault(), // современный Apollo Sandbox
           ],
-          // заготовка под лимиты запросов: глубина сейчас, стоимость — на прод-этапе
+          // заготовка под лимиты запросов: глубина сейчас, стоимость — позже
           validationRules: [depthLimit(maxDepth)],
 
           // Подписки поверх graphql-ws. Аутентификация — ОДИН раз при установке
@@ -191,16 +191,16 @@ interface GraphqlWsContext {
       }),
     }),
 
-    // ── доменное ядро (Этап 2) ──
+    // ── доменное ядро ──
     PrismaModule,
-    AuthModule, // ── аутентификация (Этап 3) ──
+    AuthModule, // ── аутентификация ──
     UsersModule,
     PostsModule,
     ReactionsModule,
     CommentsModule,
     NotificationsModule,
     FeedModule,
-    PresenceModule, // ── presence + typing + аутентификация подписок (Этап 4) ──
+    PresenceModule, // ── presence + typing + аутентификация подписок ──
     // DataLoaderModule отдельно тащить не нужно — он импортируется внутри GraphQLModule
   ],
   providers: [

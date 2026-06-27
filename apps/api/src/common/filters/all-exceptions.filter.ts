@@ -37,8 +37,8 @@ const CODE_BY_STATUS: Record<number, string> = {
  *  - GraphQL: возвращает `GraphQLError` с `extensions.code` → дальше её шлифует `formatError`;
  *  - HTTP (REST-контроллеры, напр. /health): пишет нормализованный JSON в response.
  *
- * Понадобится сразу на Этапе 2, как только появятся `NotFoundException`,
- * `ForbiddenException` и ошибки валидации `InputType`.
+ * Единая точка для `NotFoundException`, `ForbiddenException` и ошибок валидации
+ * `InputType` — все приводятся к ответу с машинно-читаемым `code`.
  */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {

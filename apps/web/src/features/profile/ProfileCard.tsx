@@ -3,7 +3,7 @@ import { Avatar, Card, Skeleton } from "@heroui/react";
 import { graphql } from "../../gql"; // сгенерировано codegen'ом (yarn codegen)
 
 // Типизированный документ: типы переменных и данных выводятся автоматически.
-// Поле user(username) — публичное (бэкенд-Этап 3), поэтому работает без токена.
+// Поле user(username) — публичное, поэтому работает без токена.
 const UserQuery = graphql(`
   query User($username: String!) {
     user(username: $username) {
