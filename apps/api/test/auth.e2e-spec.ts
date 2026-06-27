@@ -2,9 +2,11 @@ import "reflect-metadata";
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
+import { Redis } from "ioredis";
 import { AppModule } from "../src/app.module";
 import { configureApp } from "../src/app.setup";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { REDIS_CLIENT } from "../src/redis/redis.constants";
 
 const USERNAME = `e2e_${Date.now()}`.slice(0, 30);
 const PASSWORD = "supersecret1";
@@ -26,7 +28,9 @@ describe("Auth flow (e2e)", () => {
     configureApp(app, false, true);
     await app.init();
     prisma = app.get(PrismaService);
-    // подчищаем остатки прошлых прогонов
+    // сбрасываем Redis-throttler (register лимитирован 5/час с IP — иначе серия
+    // прогонов упирается в лимит) и подчищаем остатки прошлых прогонов
+    await app.get<Redis>(REDIS_CLIENT).flushdb();
     await prisma.user.deleteMany({ where: { username: { startsWith: "e2e_" } } });
   });
 

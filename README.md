@@ -36,6 +36,10 @@ social-platform/
   `newNotification`, два паттерна фильтрации (по подписчику и по аргументу `postId`); **presence**
   (счётчик соединений в Redis) и эфемерный **typing**; throttler на **shared Redis-хранилище**;
   быстрый **denylist** отозванных refresh-токенов (fail-open); GraphQL-aware `LoggingInterceptor`.
+  Доработки перед Этапом 5: **e2e-тесты подписок** на реальном `graphql-ws`-клиенте
+  (`test/subscriptions.e2e-spec.ts`) и **heartbeat** для мёртвых коннектов — TTL на
+  presence-ключах, продлеваемый фоновым sweeper'ом (онлайн-статус самозалечивается
+  при жёстком крахе процесса; зависшие сокеты рвёт WS-keepAlive graphql-ws).
 
 ## Быстрый старт
 
@@ -104,5 +108,5 @@ mutation { follow(userId: "BOB_ID") }     # во вкладке 1 мгновен
 | `yarn workspace @social/api db:down`        | остановить контейнеры                      |
 | `yarn workspace @social/api prisma:migrate` | создать/применить миграцию (`migrate dev`) |
 | `yarn workspace @social/api prisma:studio`  | визуальный браузер БД                      |
-| `yarn workspace @social/api test:e2e`       | e2e-тесты (Jest + supertest, нужна БД)     |
+| `yarn workspace @social/api test:e2e`       | e2e: auth+подписки (Postgres+Redis)        |
 | `yarn workspace @social/api <скрипт>`       | запуск скрипта конкретного приложения      |

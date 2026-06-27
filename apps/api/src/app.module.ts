@@ -124,6 +124,11 @@ interface GraphqlWsContext {
           // не умеет ставить заголовки на handshake → токен едет в connectionParams.
           subscriptions: {
             "graphql-ws": {
+              // сокет, открывший WS, но не приславший ConnectionInit за это время,
+              // закрывается — не держим «полуоткрытые» соединения. Сам keepAlive
+              // (WS-пинг ~12с с terminate) graphql-ws держит включённым по умолчанию
+              // и рвёт зависшие коннекты → onDisconnect освобождает presence.
+              connectionInitWaitTimeout: 10_000,
               onConnect: (context: GraphqlWsContext) => {
                 // graphql-ws всегда кладёт extra ({ socket, request }); мы дополняем
                 // его user/followingIds. ?? на случай отсутствия — чтобы не потерять ссылку.
