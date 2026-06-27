@@ -1,23 +1,47 @@
 import { Suspense } from "react";
-import { Link, Outlet, useLocation } from "react-router";
+import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { Button } from "@heroui/react";
 import { useTheme } from "../shared/theme/useTheme";
+import { useAuth } from "../features/auth/AuthProvider";
 import { ErrorBoundary } from "../shared/ui/ErrorBoundary";
 import { RouteFallback } from "../shared/ui/RouteFallback";
 
 export function Layout() {
   const { theme, toggle } = useTheme();
+  const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="flex items-center justify-between border-b px-6 py-3">
         <Link to="/" className="text-lg font-semibold">
           Соцсеть
         </Link>
-        {/* React Aria-конвенция HeroUI: onPress, не onClick (тач/клавиатура/SR) */}
-        <Button variant="ghost" onPress={toggle}>
-          {theme === "dark" ? "☀️ Светлая" : "🌙 Тёмная"}
-        </Button>
+        <div className="flex items-center gap-3">
+          {user ? (
+            <>
+              <span className="text-default-500">@{user.username}</span>
+              <Button
+                variant="ghost"
+                onPress={async () => {
+                  await logout();
+                  navigate("/login");
+                }}
+              >
+                Выйти
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" onPress={() => navigate("/login")}>
+              Войти
+            </Button>
+          )}
+          {/* React Aria: onPress, не onClick */}
+          <Button variant="ghost" onPress={toggle}>
+            {theme === "dark" ? "☀️" : "🌙"}
+          </Button>
+        </div>
       </header>
       <main>
         {/* Единая граница загрузки/ошибок маршрута — фундамент под suspense-хуки.

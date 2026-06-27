@@ -1,0 +1,44 @@
+import { useTransition } from "react";
+import { useReadQuery, type QueryRef } from "@apollo/client/react";
+import { Button } from "@heroui/react";
+import { PostCard } from "../post/PostCard";
+import { type FeedResult } from "./feed.graphql";
+
+export function FeedList({
+  queryRef,
+  loadMore,
+}: {
+  queryRef: QueryRef<FeedResult>;
+  loadMore: (cursor: string) => Promise<unknown>;
+}) {
+  // useReadQuery саспендит ТОЛЬКО этот компонент, пока данных нет
+  const { data } = useReadQuery(queryRef);
+  const { items, nextCursor } = data.feed;
+  // isPending блокирует кнопку на время догрузки — иначе двойной клик дописал бы
+  // ту же страницу второй раз (тот же cursor) и продублировал бы посты
+  const [isPending, startTransition] = useTransition();
+
+  return (
+    <div className="mx-auto max-w-xl p-4">
+      {items.map((post) => (
+        <PostCard key={post.id} post={post} />
+      ))}
+      {nextCursor && (
+        <Button
+          variant="outline"
+          className="w-full"
+          isDisabled={isPending}
+          onPress={() =>
+            // startTransition: НЕ показываем fallback, держим старый список во
+            // время догрузки → плавная бесконечная лента вместо мигания скелетоном
+            startTransition(() => {
+              void loadMore(nextCursor);
+            })
+          }
+        >
+          {isPending ? "Загрузка…" : "Загрузить ещё"}
+        </Button>
+      )}
+    </div>
+  );
+}

@@ -1,38 +1,66 @@
-import { ApolloClient, HttpLink, InMemoryCache } from "@apollo/client";
+import {
+  ApolloClient,
+  CombinedGraphQLErrors,
+  HttpLink,
+  from,
+} from "@apollo/client";
+import { SetContextLink } from "@apollo/client/link/context";
+import { ErrorLink } from "@apollo/client/link/error";
+import { Observable } from "rxjs";
+import { cache } from "./cache";
+import { tokenStore } from "../auth/token-store";
+import { refreshSession } from "../auth/refresh";
+import { notifySessionExpired } from "../auth/auth-events";
 
-// Страница ленты с бэкенда: PostConnection { items: [Post!]!, nextCursor: String }
-interface FeedPage {
-  items: readonly unknown[];
-  nextCursor: string | null;
-  __typename?: string;
-}
+// credentials:"include" — браузер шлёт/принимает httpOnly refresh-cookie кросс-ориджин
+// (бэкенд в CORS включил credentials и рефлексирует origin в dev)
+const httpLink = new HttpLink({
+  uri: import.meta.env.VITE_API_URL,
+  credentials: "include",
+});
 
-// Ядро Apollo Client 4 импортируется из "@apollo/client", React-биндинги
-// (ApolloProvider/useQuery/...) — из "@apollo/client/react".
-export const apolloClient = new ApolloClient({
-  link: new HttpLink({ uri: import.meta.env.VITE_API_URL }),
-  cache: new InMemoryCache({
-    typePolicies: {
-      Query: {
-        fields: {
-          // Курсорная лента: keyArgs:[] → одна запись в кэше независимо от
-          // cursor/limit, а merge СКЛЕИВАЕТ страницы. Без этого fetchMore затирал
-          // бы предыдущую страницу.
-          feed: {
-            keyArgs: [],
-            merge(existing: FeedPage | undefined, incoming: FeedPage): FeedPage {
-              if (!existing) return incoming;
-              return {
-                ...incoming,
-                items: [...existing.items, ...incoming.items],
-              };
-            },
-          },
-        },
-      },
+// authLink: подставляет access-токен из стора в каждый запрос
+const authLink = new SetContextLink((prevContext) => {
+  const token = tokenStore.getAccess();
+  return {
+    headers: {
+      ...prevContext.headers,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
-    // Post/User нормализуются по умолчанию через __typename + id.
-  }),
-  // позже — цепочка линков (auth + refresh) и split с WS для подписок.
+  };
+});
+
+// errorLink: на UNAUTHENTICATED обновляет токен и ПОВТОРЯЕТ запрос
+const errorLink = new ErrorLink(({ error, operation, forward }) => {
+  if (
+    CombinedGraphQLErrors.is(error) &&
+    error.errors.some((e) => e.extensions?.code === "UNAUTHENTICATED")
+  ) {
+    return new Observable((observer) => {
+      refreshSession()
+        .then((newAccess) => {
+          if (!newAccess) {
+            // достигли error-link → запрос был авторизованным, а refresh не удался:
+            // сессия истекла. Централизованно разлогиниваем (→ редирект на /login),
+            // затем пробрасываем ошибку конкретному запросу.
+            notifySessionExpired();
+            observer.error(error);
+            return;
+          }
+          // токен уже в сторе; forward пройдёт authLink ПОВТОРНО и подставит новый
+          forward(operation).subscribe(observer);
+        })
+        .catch((e: unknown) => observer.error(e));
+    });
+  }
+  // прочие ошибки не трогаем (возврат void)
+  return;
+});
+
+export const apolloClient = new ApolloClient({
+  // ПОРЯДОК ВАЖЕН: errorLink первым → его forward(operation) переисполнит authLink
+  // с новым токеном (поэтому вручную переписывать заголовок в error-link не нужно)
+  link: from([errorLink, authLink, httpLink]),
+  cache, // нормализация + field policy для курсорной ленты (см. cache.ts)
   devtools: { enabled: import.meta.env.DEV },
 });

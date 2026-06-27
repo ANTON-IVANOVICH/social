@@ -9,6 +9,10 @@ const config: CodegenConfig = {
   generates: {
     "src/gql/": {
       preset: "client", // типизированный graphql() + fragment masking
+      presetConfig: {
+        // разворачиватель маски — чистая функция getFragmentData (НЕ хук useFragment Apollo)
+        fragmentMasking: { unmaskFunctionName: "getFragmentData" },
+      },
       config: { useTypeImports: true },
     },
   },

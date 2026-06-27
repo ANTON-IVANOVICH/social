@@ -51,12 +51,22 @@ social-platform/
 - **HeroUI v3 + Tailwind v4** без Provider (тема через CSS-переменные, компаунд-компоненты
   `Card.Header`/`Avatar.Image`, React Aria `onPress`/`isDisabled`), тёмная тема классом на корне.
 - **Apollo Client 4**: раздельные импорты ядра (`@apollo/client`) и React-биндингов
-  (`@apollo/client/react`), `HttpLink` → `/graphql`, нормализованный `InMemoryCache` с field policy
-  для курсорной ленты (`feed`: `keyArgs:[]` + `merge`).
+  (`@apollo/client/react`), нормализованный `InMemoryCache` (сущности по `__typename`+`id`) с
+  **field policy** для курсорной ленты (`feed`: `keyArgs:false` + `merge` по `nextCursor`).
 - **GraphQL Code Generator** (client-preset) по `apps/api/src/schema.gql` — типизированный
-  `graphql()` + fragment masking; роутинг React Router 7; типизированный `useQuery`
-  (публичный профиль `user(username)`), рендерящий данные из NestJS.
-- **Граница маршрута:** `<Suspense>` + error-boundary вокруг `<Outlet>` (фундамент под suspense-хуки).
+  `graphql()`; роутинг React Router 7; типизированный `useQuery` (публичный профиль `user(username)`).
+- **Фрагменты с masking:** колокейтед-фрагмент `PostCard_post` + `getFragmentData` — компонент
+  видит строго свои поля; codegen связывает фрагмент с запросом `Feed`.
+- **Suspense-лента:** `useBackgroundQuery` (запуск рано, без водопадов) + `useReadQuery` (саспендит
+  только ленту) в паре с `<Suspense>` + error-boundary вместо ручных `loading`/`error`; `fetchMore`
+  со `startTransition` — плавная бесконечная лента; дата-слой инкапсулирован в хук `useFeed`.
+- **Аутентификация:** цепочка Apollo Links 4 — `SetContextLink` (Bearer access) + `ErrorLink`
+  (на `UNAUTHENTICATED` → **refresh-ротация** одним in-flight промисом → повтор запроса);
+  access-токен в памяти, **refresh в httpOnly-cookie** (`credentials:"include"`, сырой `fetch`
+  для refresh против рекурсии); bootstrap сессии через **`use(Promise)`** + `<Suspense>`; контекст
+  пользователя (`createContext` как провайдер + `use(Context)`).
+- **Формы на React 19 Actions:** `useActionState` (состояние/ошибка/pending) + `useFormStatus`
+  (pending кнопки без пропов), HeroUI `TextField`; защита маршрутов через `RequireAuth`.
 
 ## Быстрый старт
 
@@ -86,8 +96,9 @@ yarn dev                       # через Turborepo: api (:3000) + web (:5173)
 >
 > **Фронт ↔ бэк:** `codegen` читает `apps/api/src/schema.gql` (пишется бэкендом при
 > старте), поэтому хотя бы раз запустите api перед первым `codegen`. Фронт на
-> `http://localhost:5173`; страница профиля — `http://localhost:5173/u/bob` (создайте
-> `bob` мутацией `register`). CORS в dev открыт — правок бэкенда не нужно.
+> `http://localhost:5173`. Откройте `/register`, создайте пользователя — залогинит и
+> кинет на ленту; refresh живёт в httpOnly-cookie, перезагрузка тихо восстановит сессию.
+> CORS в dev рефлексирует origin + credentials — правок бэкенда не нужно.
 
 Откройте `http://localhost:3000/graphql` — Apollo Sandbox. Пример сценария (за auth):
 
