@@ -1,19 +1,25 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { Prisma, User } from "@prisma/client";
+import { Redis } from "ioredis";
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../../prisma/prisma.service";
+import { REDIS_CLIENT } from "../../redis/redis.constants";
 import { JwtPayload } from "../../common/types/auth-user";
 import { PasswordService } from "./password.service";
 import { RegisterInput } from "./dto/register.input";
 import { LoginInput } from "./dto/login.input";
 
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
+const REFRESH_TTL_SECONDS = REFRESH_TTL_MS / 1000;
+const DENYLIST_PREFIX = "revoked:"; // быстрый кеш отозванных refresh-хешей в Redis
 
 interface SessionMeta {
   userAgent?: string;
@@ -32,11 +38,13 @@ function ttlToSeconds(ttl: string): number {
 @Injectable()
 export class AuthService {
   private readonly accessTtlSeconds: number;
+  private readonly logger = new Logger(AuthService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly passwords: PasswordService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
     config: ConfigService,
   ) {
     // advertised expiresIn берём из того же конфига, что подписывает токен —
@@ -92,6 +100,13 @@ export class AuthService {
 
   async refresh(refreshToken: string, meta: SessionMeta) {
     const tokenHash = this.hashToken(refreshToken);
+
+    // Быстрый путь: отозванный токен отсекаем по Redis-denylist без похода в Postgres.
+    // Это лишь кеш — источник правды остаётся БД (атомарная ротация ниже).
+    if (await this.isDenied(tokenHash)) {
+      throw new UnauthorizedException("Недействительный refresh-токен");
+    }
+
     const record = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
     });
@@ -110,13 +125,25 @@ export class AuthService {
 
     if (revoked.count !== 1) {
       // токен уже использован/отозван → гонка или reuse украденного токена.
-      // Reuse-detection: отзываем всю «семью» активных токенов пользователя.
+      // Reuse-detection: отзываем всю «семью» активных токенов пользователя и
+      // заносим хеши в denylist, чтобы будущие попытки отсекались быстро.
+      const family = await this.prisma.refreshToken.findMany({
+        where: { userId: record.userId, revokedAt: null },
+        select: { tokenHash: true },
+      });
       await this.prisma.refreshToken.updateMany({
         where: { userId: record.userId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      await Promise.all([
+        this.deny(tokenHash),
+        ...family.map((t) => this.deny(t.tokenHash)),
+      ]);
       throw new UnauthorizedException("Недействительный refresh-токен");
     }
+
+    // ротированный (старый) токен — в denylist
+    await this.deny(tokenHash);
 
     const user = await this.prisma.user.findUnique({
       where: { id: record.userId },
@@ -134,7 +161,35 @@ export class AuthService {
       where: { tokenHash, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    await this.deny(tokenHash);
     return true;
+  }
+
+  // denylist — best-effort кеш поверх БД. Любой сбой Redis НЕ ломает auth:
+  // на запись просто логируем, на чтение fail-open (БД отловит reuse в любом случае).
+  private async deny(tokenHash: string): Promise<void> {
+    try {
+      await this.redis.setex(
+        `${DENYLIST_PREFIX}${tokenHash}`,
+        REFRESH_TTL_SECONDS,
+        "1",
+      );
+    } catch (e) {
+      this.logger.warn(
+        `denylist write failed: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+  }
+
+  private async isDenied(tokenHash: string): Promise<boolean> {
+    try {
+      return (await this.redis.get(`${DENYLIST_PREFIX}${tokenHash}`)) !== null;
+    } catch (e) {
+      this.logger.warn(
+        `denylist read failed (fail-open): ${e instanceof Error ? e.message : e}`,
+      );
+      return false; // fail-open: БД остаётся источником правды
+    }
   }
 
   private async issueTokens(user: User, meta: SessionMeta) {

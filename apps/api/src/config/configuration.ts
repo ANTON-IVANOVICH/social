@@ -6,6 +6,7 @@ export default () => ({
   graphql: {
     maxDepth: parseInt(process.env.GRAPHQL_MAX_DEPTH ?? "12", 10),
   },
+  redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
   jwt: {
     secret: process.env.JWT_SECRET as string,
     accessTtl: process.env.JWT_ACCESS_TTL ?? "15m",

@@ -11,6 +11,9 @@ import { AuthResolver } from "./auth.resolver";
   imports: [
     PassportModule,
     JwtModule.registerAsync({
+      // global: JwtService доступен и SubscriptionContextService (онлайн-аутентификация
+      // WS-подписок), а не только AuthModule — это правка одной строки из Этапа 3
+      global: true,
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.getOrThrow<string>("jwt.secret"),

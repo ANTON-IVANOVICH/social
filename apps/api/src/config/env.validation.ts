@@ -41,6 +41,10 @@ export class EnvironmentVariables {
   @IsString()
   DATABASE_URL: string;
 
+  // Redis: pub/sub для подписок между инстансами, shared-throttler, presence, denylist
+  @IsString()
+  REDIS_URL: string = "redis://localhost:6379";
+
   // Секрет для подписи JWT — минимум 32 символа (короткий секрет легко брутфорсить)
   @IsString()
   @MinLength(32, { message: "JWT_SECRET должен быть не короче 32 символов" })

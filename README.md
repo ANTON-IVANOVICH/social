@@ -17,7 +17,7 @@ social-platform/
 └── .yarnrc.yml       # nodeLinker: node-modules
 ```
 
-Реализованы **Этапы 1–3** бэкенда (`apps/api`):
+Реализованы **Этапы 1–4** бэкенда (`apps/api`):
 
 - **Этап 1 — каркас:** GraphQL (Apollo, code-first), валидация конфигурации, Pino-логи,
   health (GraphQL + REST), graceful shutdown, глобальный exception-фильтр, лимит глубины запросов.
@@ -29,6 +29,13 @@ social-platform/
   `@CurrentUser`/`@Auth` + `GqlAuthGuard`, **RBAC** (`RolesGuard`), `PostOwnerGuard`, персонализированная
   лента подписок, поле `myReaction`, rate-limiting (`GqlThrottlerGuard` + `@Throttle`), валидация
   `JWT_SECRET`, **e2e-тесты** auth-флоу (Jest + supertest).
+- **Этап 4 — реальное время:** **GraphQL Subscriptions** на `graphql-ws` с аутентификацией через
+  `connectionParams` в `onConnect` (один раз на соединение); единый `context` для HTTP и WS
+  (`@CurrentUser` и DataLoader работают и в подписках); **Redis** (`ioredis`) + `RedisPubSub` для
+  масштабирования подписок между инстансами; события `postAdded`/`reactionAdded`/`commentAdded`/
+  `newNotification`, два паттерна фильтрации (по подписчику и по аргументу `postId`); **presence**
+  (счётчик соединений в Redis) и эфемерный **typing**; throttler на **shared Redis-хранилище**;
+  быстрый **denylist** отозванных refresh-токенов (fail-open); GraphQL-aware `LoggingInterceptor`.
 
 ## Быстрый старт
 
@@ -39,8 +46,8 @@ yarn install
 # 2. Подготовить env для api
 cp apps/api/.env.example apps/api/.env
 
-# 3. Поднять Postgres (Docker) и применить миграции
-yarn workspace @social/api db:up
+# 3. Поднять Postgres + Redis (Docker) и применить миграции
+yarn workspace @social/api db:up                 # docker compose up -d (postgres + redis)
 yarn workspace @social/api prisma:migrate        # prisma migrate dev
 
 # 4. Запустить api в режиме разработки
@@ -48,8 +55,9 @@ yarn dev                       # через Turborepo
 # или точечно: yarn workspace @social/api dev
 ```
 
-> Postgres поднимается в контейнере `social-postgres-1` на стандартном порту **5432**
-> (см. `apps/api/docker-compose.yml`); строка подключения — в `apps/api/.env`.
+> Postgres (`social-postgres-1`, порт **5432**) и Redis (`social-redis-1`, порт **6379**)
+> поднимаются в контейнерах (см. `apps/api/docker-compose.yml`); строки подключения
+> `DATABASE_URL`/`REDIS_URL` — в `apps/api/.env`.
 
 Откройте `http://localhost:3000/graphql` — Apollo Sandbox. Пример сценария (Этап 3 — за auth):
 
@@ -68,14 +76,32 @@ query { feed(limit: 10) {                                                       
 
 REST-проба для оркестраторов: `curl http://localhost:3000/health`.
 
+**Подписки (Этап 4).** В Apollo Sandbox откройте Connection settings → Subscriptions и задайте
+`connectionParams`: `{ "authorization": "Bearer <accessToken>" }` (для WS токен едет здесь, а не в Headers).
+
+```graphql
+# Вкладка 1 (токен bob): живые уведомления bob'а
+subscription { newNotification {
+  __typename id createdAt
+  ... on FollowNotification { follower { username } }
+  ... on ReactionNotification { actor { username } post { id } }
+} }
+
+# Вкладка 2 (Headers: Authorization: Bearer <токен alice>): alice подписывается на bob
+mutation { follow(userId: "BOB_ID") }     # во вкладке 1 мгновенно прилетит FollowNotification
+```
+
+Аналогично: `postAdded` (живая лента подписок), `reactionAdded(postId)`/`commentAdded(postId)`
+(события на странице поста), `typing(postId)` и `presenceChanged` (онлайн-статус).
+
 ## Полезные команды
 
 | Команда                                     | Что делает                                 |
 | ------------------------------------------- | ------------------------------------------ |
 | `yarn dev`                                  | dev-режим всех приложений (watch)          |
 | `yarn build` / `yarn typecheck`             | сборка / проверка типов по монорепо        |
-| `yarn workspace @social/api db:up`          | поднять Postgres в Docker                  |
-| `yarn workspace @social/api db:down`        | остановить Postgres                        |
+| `yarn workspace @social/api db:up`          | поднять Postgres + Redis в Docker          |
+| `yarn workspace @social/api db:down`        | остановить контейнеры                      |
 | `yarn workspace @social/api prisma:migrate` | создать/применить миграцию (`migrate dev`) |
 | `yarn workspace @social/api prisma:studio`  | визуальный браузер БД                      |
 | `yarn workspace @social/api test:e2e`       | e2e-тесты (Jest + supertest, нужна БД)     |

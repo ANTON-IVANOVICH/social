@@ -1,4 +1,4 @@
-import { UseGuards } from "@nestjs/common";
+import { Inject, UseGuards } from "@nestjs/common";
 import {
   Args,
   Context,
@@ -9,13 +9,16 @@ import {
   Query,
   ResolveField,
   Resolver,
+  Subscription,
 } from "@nestjs/graphql";
 import { ReactionType } from "@prisma/client";
+import { RedisPubSub } from "graphql-redis-subscriptions";
 import { Auth } from "../../common/decorators/auth.decorator";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { GqlAuthGuard } from "../../common/guards/gql-auth.guard";
 import { AuthUser } from "../../common/types/auth-user";
 import { IDataLoaders } from "../../common/dataloader/dataloader.types";
+import { PUB_SUB } from "../../pubsub/pubsub.module";
 import { User } from "../users/models/user.model";
 import { Post } from "./models/post.model";
 import { PostConnection } from "./models/post-connection.model";
@@ -25,9 +28,22 @@ import { FeedArgs } from "./dto/feed.args";
 import { PostsService } from "./posts.service";
 import { PostOwnerGuard } from "./guards/post-owner.guard";
 
+interface PostAddedPayload {
+  postAdded: Post;
+  authorId: string;
+}
+
+interface SubContext {
+  req: { user: AuthUser };
+  followingIds?: Set<string>;
+}
+
 @Resolver(() => Post)
 export class PostsResolver {
-  constructor(private readonly posts: PostsService) {}
+  constructor(
+    private readonly posts: PostsService,
+    @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
+  ) {}
 
   @Query(() => PostConnection)
   @Auth() // лента — только для залогиненных, по их подпискам
@@ -38,6 +54,18 @@ export class PostsResolver {
   @Query(() => Post, { nullable: true }) // публично: отдельный пост можно посмотреть без входа
   post(@Args("id", { type: () => ID }) id: string) {
     return this.posts.findById(id);
+  }
+
+  // Живая лента: «события про меня» — фильтр по личности подписчика (из контекста
+  // соединения), а не по аргументу. followingIds загружены один раз при connect.
+  @Subscription(() => Post, {
+    resolve: (payload: PostAddedPayload) => payload.postAdded,
+    filter: (payload: PostAddedPayload, _vars: unknown, context: SubContext) =>
+      (context.followingIds?.has(payload.authorId) ?? false) ||
+      payload.authorId === context.req.user.userId,
+  })
+  postAdded() {
+    return this.pubsub.asyncIterableIterator("postAdded");
   }
 
   @Mutation(() => Post)

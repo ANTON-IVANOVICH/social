@@ -1,5 +1,7 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
+import { RedisPubSub } from "graphql-redis-subscriptions";
 import { PrismaService } from "../../prisma/prisma.service";
+import { PUB_SUB } from "../../pubsub/pubsub.module";
 import { FollowsService } from "../users/follows.service";
 import { encodeCursor, decodeCursor } from "../../common/cursor/cursor.util";
 import { CreatePostInput } from "./dto/create-post.input";
@@ -15,14 +17,15 @@ export class PostsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly follows: FollowsService,
+    @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
   ) {}
 
   // Создание поста + извлечение хэштегов — атомарно, в одной транзакции
   async create(authorId: string, input: CreatePostInput) {
     const tags = extractHashtags(input.content);
 
-    return this.prisma.$transaction(async (tx) => {
-      const post = await tx.post.create({
+    const post = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.post.create({
         data: {
           authorId,
           content: input.content,
@@ -43,13 +46,19 @@ export class PostsService {
           select: { id: true },
         });
         await tx.postHashtag.createMany({
-          data: hashtags.map((h) => ({ postId: post.id, hashtagId: h.id })),
+          data: hashtags.map((h) => ({ postId: created.id, hashtagId: h.id })),
           skipDuplicates: true,
         });
       }
 
-      return post;
+      return created;
     });
+
+    // публикуем ПОСЛЕ коммита транзакции (внутри tx нельзя — событие ушло бы до
+    // фиксации). «Лучшими усилиями»: падение между commit и publish теряет событие,
+    // но пост уже в БД и придёт через query feed. Гарантию даст outbox на этапе 5+.
+    await this.pubsub.publish("postAdded", { postAdded: post, authorId });
+    return post;
   }
 
   findById(id: string) {
