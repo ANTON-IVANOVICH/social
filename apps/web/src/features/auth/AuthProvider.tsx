@@ -1,6 +1,7 @@
 import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { useMutation } from "@apollo/client/react";
 import { apolloClient } from "../../shared/apollo/client";
+import { wsClient } from "../../shared/apollo/ws-client";
 import { tokenStore } from "../../shared/auth/token-store";
 import { refreshSession } from "../../shared/auth/refresh";
 import { onSessionExpired } from "../../shared/auth/auth-events";
@@ -105,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenStore.clear();
     setUser(null);
     await apolloClient.clearStore(); // вычищаем кэш от данных прошлого пользователя
+    wsClient.terminate(); // закрываем WS — не держим сессию разлогиненного пользователя
   };
 
   // React Compiler сам стабилизирует идентичности — ручных useMemo/useCallback нет.

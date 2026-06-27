@@ -3,11 +3,15 @@ import {
   CombinedGraphQLErrors,
   HttpLink,
   from,
+  split,
 } from "@apollo/client";
 import { SetContextLink } from "@apollo/client/link/context";
 import { ErrorLink } from "@apollo/client/link/error";
+import { GraphQLWsLink } from "@apollo/client/link/subscriptions";
+import { getMainDefinition } from "@apollo/client/utilities";
 import { Observable } from "rxjs";
 import { cache } from "./cache";
+import { wsClient } from "./ws-client";
 import { tokenStore } from "../auth/token-store";
 import { refreshSession } from "../auth/refresh";
 import { notifySessionExpired } from "../auth/auth-events";
@@ -57,10 +61,27 @@ const errorLink = new ErrorLink(({ error, operation, forward }) => {
   return;
 });
 
+// HTTP-цепочка (auth + refresh) применяется ТОЛЬКО к query/mutation.
+// ПОРЯДОК ВАЖЕН: errorLink первым → его forward(operation) переисполнит authLink
+// с новым токеном (поэтому вручную переписывать заголовок в error-link не нужно).
+const httpChain = from([errorLink, authLink, httpLink]);
+
+const wsLink = new GraphQLWsLink(wsClient);
+
+// split на самом верху: подписки идут прямо в WS (своя аутентификация через
+// connectionParams), query/mutation — в HTTP-цепочку. Подписки НЕ должны проходить
+// HTTP-линки (authLink ставит заголовки, errorLink с refresh-повтором к стриму неприменим).
+const link = split(
+  ({ query }) => {
+    const def = getMainDefinition(query);
+    return def.kind === "OperationDefinition" && def.operation === "subscription";
+  },
+  wsLink,
+  httpChain,
+);
+
 export const apolloClient = new ApolloClient({
-  // ПОРЯДОК ВАЖЕН: errorLink первым → его forward(operation) переисполнит authLink
-  // с новым токеном (поэтому вручную переписывать заголовок в error-link не нужно)
-  link: from([errorLink, authLink, httpLink]),
+  link,
   cache, // нормализация + field policy для курсорной ленты (см. cache.ts)
   devtools: { enabled: import.meta.env.DEV },
 });

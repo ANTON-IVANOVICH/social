@@ -67,6 +67,12 @@ social-platform/
   пользователя (`createContext` как провайдер + `use(Context)`).
 - **Формы на React 19 Actions:** `useActionState` (состояние/ошибка/pending) + `useFormStatus`
   (pending кнопки без пропов), HeroUI `TextField`; защита маршрутов через `RequireAuth`.
+- **Реальное время:** `GraphQLWsLink` (graphql-ws) + `split`-линк (подписки → WS, query/mutation →
+  HTTP); WS-аутентификация через **async `connectionParams`** (читает токен лениво, обновляет перед
+  connect — стыкуется с `onConnect` бэкенда); живая лента через `subscribeToMore` (с дедупом) в
+  `useFeed`; колокол уведомлений (`useSubscription` + `cache.updateQuery`) с **полиморфным рендером
+  по `__typename`**; presence (онлайн-точки) и эфемерный typing с дебаунсом; `wsClient.terminate()`
+  при logout.
 
 ## Быстрый старт
 
