@@ -18,6 +18,9 @@ dist/
 # Code-first GraphQL — генерируемый артефакт, не коммитим
 **/schema.gql
 
+# GraphQL codegen (client-preset) — генерируется из schema.gql, не коммитим
+apps/web/src/gql/
+
 # Logs
 *.log
 logs/

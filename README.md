@@ -1,7 +1,7 @@
 # social-platform
 
-Монорепо социальной сети: NestJS + GraphQL (Apollo, code-first) бэкенд и (в будущих
-этапах) React-фронтенд, связанные общим GraphQL-контрактом.
+Монорепо социальной сети: NestJS + GraphQL (Apollo, code-first) бэкенд и React 19 +
+Apollo Client фронтенд, связанные общим GraphQL-контрактом (`schema.gql` → codegen).
 
 Инструменты: **Yarn 4 (workspaces)** + **Turborepo**.
 
@@ -10,10 +10,11 @@
 ```text
 social-platform/
 ├── apps/
-│   └── api/          # NestJS бэкенд (GraphQL Apollo, code-first)
+│   ├── api/          # NestJS бэкенд (GraphQL Apollo, code-first)
+│   └── web/          # React 19 + Vite 8 SPA (Apollo Client 4, HeroUI v3)
 ├── packages/         # общие пакеты (появятся позже: graphql-контракт, tsconfig-пресеты)
 ├── package.json      # корневой workspace
-├── turbo.json        # оркестрация задач
+├── turbo.json        # оркестрация задач (codegen фронта зависит от schema.gql бэка)
 └── .yarnrc.yml       # nodeLinker: node-modules
 ```
 
@@ -41,6 +42,20 @@ social-platform/
   presence-ключах, продлеваемый фоновым sweeper'ом (онлайн-статус самозалечивается
   при жёстком крахе процесса; зависшие сокеты рвёт WS-keepAlive graphql-ws).
 
+Реализован **Этап 1** фронтенда (`apps/web`) — каркас, подключённый к бэкенду **без
+изменения его кода** (только origin в CORS, в dev открыт):
+
+- **Vite 8 + React 19 + React Compiler 1.0** (через `@vitejs/plugin-react` v6 +
+  `@rolldown/plugin-babel` + `reactCompilerPreset` — авто-мемоизация, бейдж «Memo ✨»),
+  линт Rules of React (`eslint-plugin-react-hooks`).
+- **HeroUI v3 + Tailwind v4** без Provider (тема через CSS-переменные, компаунд-компоненты
+  `Card.Header`/`Avatar.Image`, React Aria `onPress`/`isDisabled`), тёмная тема классом на корне.
+- **Apollo Client 4**: раздельные импорты ядра (`@apollo/client`) и React-биндингов
+  (`@apollo/client/react`), `HttpLink` → `/graphql`, нормализованный `InMemoryCache`.
+- **GraphQL Code Generator** (client-preset) по `apps/api/src/schema.gql` — типизированный
+  `graphql()` + fragment masking; роутинг React Router 7; первый типизированный `useQuery`
+  (публичный профиль `user(username)`), рендерящий данные из NestJS.
+
 ## Быстрый старт
 
 ```bash
@@ -54,14 +69,23 @@ cp apps/api/.env.example apps/api/.env
 yarn workspace @social/api db:up                 # docker compose up -d (postgres + redis)
 yarn workspace @social/api prisma:migrate        # prisma migrate dev
 
-# 4. Запустить api в режиме разработки
-yarn dev                       # через Turborepo
-# или точечно: yarn workspace @social/api dev
+# 4. Подготовить env для web + сгенерировать типы из схемы бэкенда
+cp apps/web/.env.example apps/web/.env
+yarn workspace @social/web codegen   # читает apps/api/src/schema.gql → apps/web/src/gql
+
+# 5. Запустить всё в режиме разработки
+yarn dev                       # через Turborepo: api (:3000) + web (:5173)
+# или точечно: yarn workspace @social/api dev  /  yarn workspace @social/web dev
 ```
 
 > Postgres (`social-postgres-1`, порт **5432**) и Redis (`social-redis-1`, порт **6379**)
 > поднимаются в контейнерах (см. `apps/api/docker-compose.yml`); строки подключения
 > `DATABASE_URL`/`REDIS_URL` — в `apps/api/.env`.
+>
+> **Фронт ↔ бэк:** `codegen` читает `apps/api/src/schema.gql` (пишется бэкендом при
+> старте), поэтому хотя бы раз запустите api перед первым `codegen`. Фронт на
+> `http://localhost:5173`; страница профиля — `http://localhost:5173/u/bob` (создайте
+> `bob` мутацией `register`). CORS в dev открыт — правок бэкенда не нужно.
 
 Откройте `http://localhost:3000/graphql` — Apollo Sandbox. Пример сценария (Этап 3 — за auth):
 
@@ -109,4 +133,7 @@ mutation { follow(userId: "BOB_ID") }     # во вкладке 1 мгновен
 | `yarn workspace @social/api prisma:migrate` | создать/применить миграцию (`migrate dev`) |
 | `yarn workspace @social/api prisma:studio`  | визуальный браузер БД                      |
 | `yarn workspace @social/api test:e2e`       | e2e: auth+подписки (Postgres+Redis)        |
-| `yarn workspace @social/api <скрипт>`       | запуск скрипта конкретного приложения      |
+| `yarn workspace @social/web dev`            | фронт (Vite) на `localhost:5173`           |
+| `yarn workspace @social/web codegen`        | типы из `apps/api/src/schema.gql`          |
+| `yarn workspace @social/web build`          | codegen + tsc + vite build                 |
+| `yarn workspace @social/<app> <скрипт>`     | запуск скрипта конкретного приложения      |

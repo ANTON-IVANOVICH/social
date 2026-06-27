@@ -1,0 +1,3 @@
+/* порядок важен: Tailwind первым, затем токены/стили HeroUI */
+@import "tailwindcss";
+@import "@heroui/styles";
