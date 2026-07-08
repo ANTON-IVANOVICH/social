@@ -40,6 +40,13 @@ social-platform/
   (счётчик соединений в Redis, TTL + heartbeat-sweeper) и эфемерный **typing**; throttler на
   **shared Redis-хранилище**; GraphQL-aware `LoggingInterceptor`; **e2e-тесты подписок** на
   реальном `graphql-ws`-клиенте (`test/subscriptions.e2e-spec.ts`).
+- **Комментарии и медиа:** read-path ветки `Post.comments` (свой DataLoader — один `findMany`
+  на все посты выборки); загрузка аватара `uploadAvatar(file: Upload!)` по спеке **GraphQL
+  multipart request** (`graphql-upload-minimal`), поток на диск через `pipeline` с чисткой
+  недокачанных файлов, ключ с расширением из mimetype; **sharp** в фоне (авто-ориентация, ресайз,
+  `.webp` + `_thumb.webp`, EXIF/GPS не копируются) — ответ мутации обработку не ждёт; раздача
+  `/static/` из `storage/` (helmet CORP → `cross-origin`, база абсолютных URL — `PUBLIC_URL`);
+  `reactionAdded` публикуется только на **новую** реакцию — смена типа не двигает живые счётчики.
 
 ### Фронтенд (`apps/web`)
 
@@ -73,6 +80,19 @@ social-platform/
   `useFeed`; колокол уведомлений (`useSubscription` + `cache.updateQuery`) с **полиморфным рендером
   по `__typename`**; presence (онлайн-точки) и эфемерный typing с дебаунсом; `wsClient.terminate()`
   при logout.
+- **Оптимистичный UX:** лайк через **`optimisticResponse` + `cache.modify`** (мутация возвращает
+  `Boolean` → кэш правится вручную; правка в нормализованной записи `Post:<id>` видна во всех
+  вьюхах, счётчик не двоится); ветка комментариев разворачивается по клику — ленивый запрос
+  `Post.comments` + **React 19 `useOptimistic`** («отправляемый» комментарий сразу виден
+  полупрозрачным, откат автоматический); живые `commentAdded`/`reactionAdded` для развёрнутого
+  поста (общий `appendToCache` с дедупом — свой комментарий приходит и мутацией, и подпиской);
+  клиентский поиск по ленте на **`useDeferredValue`** (ввод отзывчив, список «догоняет»).
+- **Медиа и метаданные:** `UploadHttpLink` (`apollo-upload-client`) вместо `HttpLink` — File в
+  переменных уезжает multipart-запросом (`apollo-require-preflight` — для CSRF-защиты сервера),
+  скаляр `Upload → File` в codegen; `AvatarUpload` — мутация возвращает `User`, Apollo сам
+  обновляет нормализованную запись (аватар меняется во всех вьюхах без ручных правок кэша);
+  страница профиля на `useSuspenseQuery` + **нативные метаданные документа** React 19
+  (`<title>`/`<meta>` из дерева) и **`preload`** аватара при наведении на автора поста.
 
 ## Быстрый старт
 
@@ -140,6 +160,17 @@ mutation { follow(userId: "BOB_ID") }     # во вкладке 1 мгновен
 
 Аналогично: `postAdded` (живая лента подписок), `reactionAdded(postId)`/`commentAdded(postId)`
 (события на странице поста), `typing(postId)` и `presenceChanged` (онлайн-статус).
+
+**Загрузка аватара** (multipart, без Sandbox — curl):
+
+```bash
+curl http://localhost:3000/graphql \
+  -H "authorization: Bearer <accessToken>" -H "apollo-require-preflight: true" \
+  -F operations='{"query":"mutation($file: Upload!){ uploadAvatar(file:$file){ avatarUrl } }","variables":{"file":null}}' \
+  -F map='{"0":["variables.file"]}' \
+  -F 0=@avatar.png
+# рядом с файлом в apps/api/storage/ через секунду появятся .webp и _thumb.webp (фоновый sharp)
+```
 
 ## Полезные команды
 

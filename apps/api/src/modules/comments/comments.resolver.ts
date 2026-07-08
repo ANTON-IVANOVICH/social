@@ -14,6 +14,7 @@ import { Auth } from "../../common/decorators/auth.decorator";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { AuthUser } from "../../common/types/auth-user";
 import { IDataLoaders } from "../../common/dataloader/dataloader.types";
+import { freshLoadersPerEvent } from "../../common/dataloader/fresh-per-event";
 import { PUB_SUB } from "../../pubsub/pubsub.module";
 import { User } from "../users/models/user.model";
 import { Comment } from "./models/comment.model";
@@ -46,8 +47,15 @@ export class CommentsResolver {
     filter: (payload: CommentAddedPayload, variables: { postId: string }) =>
       payload.commentAdded.postId === variables.postId,
   })
-  commentAdded(@Args("postId", { type: () => ID }) _postId: string) {
-    return this.pubsub.asyncIterableIterator("commentAdded");
+  commentAdded(
+    @Args("postId", { type: () => ID }) _postId: string,
+    @Context("loaders") loaders: IDataLoaders,
+  ) {
+    // лоадеры живут всю подписку → сбрасываем их кэш перед каждым событием
+    return freshLoadersPerEvent(
+      this.pubsub.asyncIterableIterator("commentAdded"),
+      loaders,
+    );
   }
 
   // автор комментария — через тот же DataLoader (батчинг, в т.ч. в подписке)

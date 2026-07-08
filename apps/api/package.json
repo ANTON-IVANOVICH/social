@@ -41,6 +41,7 @@
     "graphql": "^16.11.0",
     "graphql-redis-subscriptions": "^2.7.0",
     "graphql-subscriptions": "^3.0.0",
+    "graphql-upload-minimal": "^1.6.4",
     "graphql-ws": "^6.0.8",
     "helmet": "^8.0.0",
     "ioredis": "^5.11.1",
@@ -51,6 +52,7 @@
     "pino-http": "^10.3.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "sharp": "^0.35.3",
     "ws": "^8.21.0"
   },
   "devDependencies": {

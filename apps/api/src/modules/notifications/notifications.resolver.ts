@@ -13,6 +13,7 @@ import { Auth } from "../../common/decorators/auth.decorator";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { AuthUser } from "../../common/types/auth-user";
 import { IDataLoaders } from "../../common/dataloader/dataloader.types";
+import { freshLoadersPerEvent } from "../../common/dataloader/fresh-per-event";
 import { PUB_SUB } from "../../pubsub/pubsub.module";
 import { User } from "../users/models/user.model";
 import { Post } from "../posts/models/post.model";
@@ -54,8 +55,12 @@ export class NotificationsResolver {
       context: { req: { user: AuthUser } },
     ) => payload.recipientId === context.req.user.userId,
   })
-  newNotification() {
-    return this.pubsub.asyncIterableIterator("newNotification");
+  newNotification(@Context("loaders") loaders: IDataLoaders) {
+    // лоадеры живут всю подписку → сбрасываем их кэш перед каждым событием
+    return freshLoadersPerEvent(
+      this.pubsub.asyncIterableIterator("newNotification"),
+      loaders,
+    );
   }
 }
 

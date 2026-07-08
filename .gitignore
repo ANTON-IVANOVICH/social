@@ -21,6 +21,9 @@ dist/
 # GraphQL codegen (client-preset) — генерируется из schema.gql, не коммитим
 apps/web/src/gql/
 
+# Загруженные пользователями файлы (аватары и webp-производные)
+apps/api/storage/
+
 # Logs
 *.log
 logs/

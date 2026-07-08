@@ -13,7 +13,12 @@ const config: CodegenConfig = {
         // разворачиватель маски — чистая функция getFragmentData (НЕ хук useFragment Apollo)
         fragmentMasking: { unmaskFunctionName: "getFragmentData" },
       },
-      config: { useTypeImports: true },
+      config: {
+        useTypeImports: true,
+        // Upload-аргументы мутаций типизируются нативным File —
+        // apollo-upload-client сам упакует его в multipart-запрос
+        scalars: { Upload: "File" },
+      },
     },
   },
 };

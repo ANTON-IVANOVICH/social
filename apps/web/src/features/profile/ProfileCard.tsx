@@ -1,31 +1,9 @@
-import { useQuery } from "@apollo/client/react";
-import { Avatar, Card, Skeleton } from "@heroui/react";
-import { graphql } from "../../gql"; // сгенерировано codegen'ом (yarn codegen)
+import { Avatar, Card } from "@heroui/react";
+import type { ProfileUser } from "./profile.graphql";
 
-// Типизированный документ: типы переменных и данных выводятся автоматически.
-// Поле user(username) — публичное, поэтому работает без токена.
-const UserQuery = graphql(`
-  query User($username: String!) {
-    user(username: $username) {
-      id
-      username
-      displayName
-      avatarUrl
-    }
-  }
-`);
-
-export function ProfileCard({ username }: { username: string }) {
-  const { data, loading, error } = useQuery(UserQuery, {
-    variables: { username },
-  });
-
-  if (loading) return <Skeleton className="m-6 h-24 w-80 rounded-lg" />;
-  if (error)
-    return <div className="m-6 text-danger">Ошибка: {error.message}</div>;
-  if (!data?.user) return <div className="m-6">Пользователь не найден</div>;
-
-  const u = data.user;
+// Презентационная карточка: данные запрашивает страница (ProfilePage), карточка
+// только рисует — так title/meta и карточка питаются одним ответом.
+export function ProfileCard({ user: u }: { user: ProfileUser }) {
   return (
     <Card className="m-6 max-w-80">
       <Card.Header className="flex items-center gap-3">
@@ -41,6 +19,7 @@ export function ProfileCard({ username }: { username: string }) {
           <div className="text-default-500">@{u.username}</div>
         </div>
       </Card.Header>
+      {u.bio && <Card.Content className="text-sm">{u.bio}</Card.Content>}
     </Card>
   );
 }

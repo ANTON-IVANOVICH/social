@@ -1,7 +1,7 @@
 import { useTransition } from "react";
 import { useReadQuery, type QueryRef } from "@apollo/client/react";
 import { Button } from "@heroui/react";
-import { PostCard } from "../post/PostCard";
+import { SearchableFeed } from "./SearchableFeed";
 import { type FeedResult } from "./feed.graphql";
 
 export function FeedList({
@@ -20,9 +20,7 @@ export function FeedList({
 
   return (
     <div className="mx-auto max-w-xl p-4">
-      {items.map((post) => (
-        <PostCard key={post.id} post={post} />
-      ))}
+      <SearchableFeed items={items} />
       {nextCursor && (
         <Button
           variant="outline"

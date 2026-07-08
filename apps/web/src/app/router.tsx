@@ -1,8 +1,8 @@
-import { createBrowserRouter, useParams } from "react-router";
+import { createBrowserRouter } from "react-router";
 import { Layout } from "./Layout";
 import { RequireAuth } from "./RequireAuth";
 import { HomeRoute } from "../features/feed/HomeRoute";
-import { ProfileCard } from "../features/profile/ProfileCard";
+import { ProfilePage } from "../features/profile/ProfilePage";
 import { LoginForm } from "../features/auth/LoginForm";
 import { RegisterForm } from "../features/auth/RegisterForm";
 
@@ -25,8 +25,3 @@ export const router = createBrowserRouter([
     ],
   },
 ]);
-
-function ProfilePage() {
-  const { username } = useParams<{ username: string }>();
-  return <ProfileCard username={username ?? ""} />;
-}

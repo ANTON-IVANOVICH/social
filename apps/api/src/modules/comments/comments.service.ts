@@ -41,6 +41,16 @@ export class CommentsService {
     return comment;
   }
 
+  // для DataLoader: комментарии по списку постов одним запросом (порядок треда —
+  // от старых к новым; id — тай-брейкер для одинаковых миллисекунд, иначе порядок
+  // «одновременных» комментариев плавал бы между чтениями); группировка — в лоадере
+  findByPostIds(postIds: readonly string[]) {
+    return this.prisma.comment.findMany({
+      where: { postId: { in: postIds as string[] } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+  }
+
   // для DataLoader: счётчики комментариев по списку постов одним groupBy
   async countByPostIds(postIds: readonly string[]) {
     const grouped = await this.prisma.comment.groupBy({

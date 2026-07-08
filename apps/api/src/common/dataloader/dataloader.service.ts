@@ -43,6 +43,19 @@ export class DataLoaderService {
         return postIds.map((id) => map.get(id) ?? 0);
       }),
 
+      // ветка комментариев поста: один findMany на все посты запроса, порядок
+      // внутри поста сохранён (orderBy createdAt в сервисе, push не переставляет)
+      commentsByPostId: new DataLoader(async (postIds: readonly string[]) => {
+        const comments = await this.comments.findByPostIds(postIds);
+        const map = new Map<string, typeof comments>();
+        for (const c of comments) {
+          const list = map.get(c.postId);
+          if (list) list.push(c);
+          else map.set(c.postId, [c]);
+        }
+        return postIds.map((id) => map.get(id) ?? []);
+      }),
+
       // составной ключ (postId, userId) → cacheKeyFn сводит его к строке для кэша
       myReactionByPostUser: new DataLoader(
         async (keys: readonly { postId: string; userId: string }[]) => {

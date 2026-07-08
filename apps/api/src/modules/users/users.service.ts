@@ -16,6 +16,11 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { username } });
   }
 
+  // аватар меняет только владелец (id — из токена в media-резолвере)
+  updateAvatar(id: string, avatarUrl: string) {
+    return this.prisma.user.update({ where: { id }, data: { avatarUrl } });
+  }
+
   // для DataLoader: батч по списку id
   findByIds(ids: readonly string[]) {
     return this.prisma.user.findMany({

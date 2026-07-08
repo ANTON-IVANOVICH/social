@@ -10,7 +10,14 @@ export function configureApp(
   corsOrigin: boolean | string | string[],
 ): void {
   // CSP отключаем только в dev — иначе не грузится Apollo Sandbox (inline-скрипты).
-  app.use(helmet({ contentSecurityPolicy: isProd ? undefined : false }));
+  // CORP ослабляем до cross-origin: аватары из /static/ загружает SPA с другого
+  // origin, а дефолтный same-origin заставил бы браузер резать такие <img>.
+  app.use(
+    helmet({
+      contentSecurityPolicy: isProd ? undefined : false,
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    }),
+  );
   // origin не рефлексируем безусловно: в проде — только allowlist (CLIENT_ORIGIN),
   // иначе любой сайт мог бы слать credentialed-запросы.
   app.enableCors({ origin: corsOrigin, credentials: true });

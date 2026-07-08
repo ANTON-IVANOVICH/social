@@ -9,6 +9,7 @@ export const PostCardFragment = graphql(`
     createdAt
     reactionCount
     commentCount
+    myReaction
     author {
       id
       username

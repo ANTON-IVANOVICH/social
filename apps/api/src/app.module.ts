@@ -32,6 +32,7 @@ import { CommentsModule } from "./modules/comments/comments.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { FeedModule } from "./modules/feed/feed.module";
 import { PresenceModule } from "./modules/presence/presence.module";
+import { MediaModule } from "./modules/media/media.module";
 import {
   SubscriptionContextService,
   SubscriptionExtra,
@@ -201,6 +202,7 @@ interface GraphqlWsContext {
     NotificationsModule,
     FeedModule,
     PresenceModule, // ── presence + typing + аутентификация подписок ──
+    MediaModule, // ── загрузка файлов (Upload scalar + sharp в фоне) ──
     // DataLoaderModule отдельно тащить не нужно — он импортируется внутри GraphQLModule
   ],
   providers: [

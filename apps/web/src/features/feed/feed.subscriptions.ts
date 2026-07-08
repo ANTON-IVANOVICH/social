@@ -6,6 +6,8 @@ export const PostAddedSub = graphql(`
   subscription PostAdded {
     postAdded {
       id
+      # той же формы, что элемент ленты: content нужен клиентскому поиску
+      content
       ...PostCard_post
     }
   }

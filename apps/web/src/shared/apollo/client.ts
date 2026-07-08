@@ -1,7 +1,6 @@
 import {
   ApolloClient,
   CombinedGraphQLErrors,
-  HttpLink,
   from,
   split,
 } from "@apollo/client";
@@ -9,6 +8,7 @@ import { SetContextLink } from "@apollo/client/link/context";
 import { ErrorLink } from "@apollo/client/link/error";
 import { GraphQLWsLink } from "@apollo/client/link/subscriptions";
 import { getMainDefinition } from "@apollo/client/utilities";
+import UploadHttpLink from "apollo-upload-client/UploadHttpLink.mjs";
 import { Observable } from "rxjs";
 import { cache } from "./cache";
 import { wsClient } from "./ws-client";
@@ -16,11 +16,16 @@ import { tokenStore } from "../auth/token-store";
 import { refreshSession } from "../auth/refresh";
 import { notifySessionExpired } from "../auth/auth-events";
 
-// credentials:"include" — браузер шлёт/принимает httpOnly refresh-cookie кросс-ориджин
-// (бэкенд в CORS включил credentials и рефлексирует origin в dev)
-const httpLink = new HttpLink({
+// Терминальный линк — UploadHttpLink вместо HttpLink: обычные операции идут
+// тем же JSON POST, а мутации с File в переменных — multipart-запросом (спека
+// GraphQL multipart request), которую на бэке разворачивает graphql-upload.
+// credentials:"include" — браузер шлёт/принимает httpOnly refresh-cookie
+// кросс-ориджин. apollo-require-preflight — иначе CSRF-защита Apollo Server
+// отвергает multipart (он «простой» запрос без обязательного префлайта).
+const httpLink = new UploadHttpLink({
   uri: import.meta.env.VITE_API_URL,
   credentials: "include",
+  headers: { "apollo-require-preflight": "true" },
 });
 
 // authLink: подставляет access-токен из стора в каждый запрос

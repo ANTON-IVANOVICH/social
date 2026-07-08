@@ -1,7 +1,10 @@
 import { Logger as NestLogger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
+import { NestExpressApplication } from "@nestjs/platform-express";
+import { graphqlUploadExpress } from "graphql-upload-minimal";
 import { Logger } from "nestjs-pino";
+import { join } from "node:path";
 import { AppModule } from "./app.module";
 import { configureApp } from "./app.setup";
 
@@ -18,7 +21,9 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
 
   // Pino становится логгером всего приложения.
   // bufferLogs: true копит ранние логи и сбрасывает их сюда, когда логгер готов.
@@ -38,6 +43,15 @@ async function bootstrap(): Promise<void> {
 
   // helmet / cors / cookie-parser / ValidationPipe — общая настройка с тестами
   configureApp(app, isProd, corsOrigin);
+
+  // multipart-загрузки (спека GraphQL multipart request) парсятся ДО GraphQL:
+  // middleware вешаем только на /graphql, лимиты — от decompression-мусора
+  app.use(
+    "/graphql",
+    graphqlUploadExpress({ maxFileSize: 15 * 1024 * 1024, maxFiles: 1 }),
+  );
+  // загруженные файлы и их webp-производные раздаются как есть из storage/
+  app.useStaticAssets(join(process.cwd(), "storage"), { prefix: "/static/" });
 
   // Активирует OnApplicationShutdown / OnModuleDestroy по SIGINT/SIGTERM (только рантайм)
   app.enableShutdownHooks();

@@ -57,6 +57,12 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   CLIENT_ORIGIN?: string;
+
+  // База абсолютных ссылок на загруженные файлы (/static/…). В dev по умолчанию
+  // http://localhost:<PORT>; в проде обязателен — иначе в БД утекут localhost-URL.
+  @IsOptional()
+  @IsString()
+  PUBLIC_URL?: string;
 }
 
 export function validate(
@@ -70,6 +76,12 @@ export function validate(
   if (errors.length > 0) {
     // Падаем сразу при старте — лучше так, чем через час в проде с непонятной ошибкой
     throw new Error(errors.map((e) => e.toString()).join("\n"));
+  }
+
+  // ссылки на файлы пишутся в БД абсолютными от PUBLIC_URL — молчаливый дефолт
+  // http://localhost в проде означал бы битые аватары у всех пользователей
+  if (validated.NODE_ENV === NodeEnv.Production && !validated.PUBLIC_URL) {
+    throw new Error("PUBLIC_URL обязателен в production (база ссылок /static/)");
   }
 
   return validated;

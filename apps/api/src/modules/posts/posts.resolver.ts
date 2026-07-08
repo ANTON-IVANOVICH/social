@@ -18,8 +18,10 @@ import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { GqlAuthGuard } from "../../common/guards/gql-auth.guard";
 import { AuthUser } from "../../common/types/auth-user";
 import { IDataLoaders } from "../../common/dataloader/dataloader.types";
+import { freshLoadersPerEvent } from "../../common/dataloader/fresh-per-event";
 import { PUB_SUB } from "../../pubsub/pubsub.module";
 import { User } from "../users/models/user.model";
+import { Comment } from "../comments/models/comment.model";
 import { Post } from "./models/post.model";
 import { PostConnection } from "./models/post-connection.model";
 import { CreatePostInput } from "./dto/create-post.input";
@@ -64,8 +66,12 @@ export class PostsResolver {
       (context.followingIds?.has(payload.authorId) ?? false) ||
       payload.authorId === context.req.user.userId,
   })
-  postAdded() {
-    return this.pubsub.asyncIterableIterator("postAdded");
+  postAdded(@Context("loaders") loaders: IDataLoaders) {
+    // лоадеры живут всю подписку → сбрасываем их кэш перед каждым событием
+    return freshLoadersPerEvent(
+      this.pubsub.asyncIterableIterator("postAdded"),
+      loaders,
+    );
   }
 
   @Mutation(() => Post)
@@ -115,6 +121,13 @@ export class PostsResolver {
     @Context("loaders") loaders: IDataLoaders,
   ) {
     return loaders.commentCountByPostId.load(post.id);
+  }
+
+  // read-path ветки комментариев (от старых к новым); DataLoader схлопывает
+  // запросы всех постов выборки в один findMany
+  @ResolveField(() => [Comment])
+  comments(@Parent() post: Post, @Context("loaders") loaders: IDataLoaders) {
+    return loaders.commentsByPostId.load(post.id);
   }
 
   // Моя реакция на пост. Текущий пользователь приезжает из контекста корневого

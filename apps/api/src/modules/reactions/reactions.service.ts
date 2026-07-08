@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { ReactionType } from "@prisma/client";
+import { Prisma, ReactionType } from "@prisma/client";
 import { RedisPubSub } from "graphql-redis-subscriptions";
 import { PrismaService } from "../../prisma/prisma.service";
 import { PUB_SUB } from "../../pubsub/pubsub.module";
@@ -11,15 +11,36 @@ export class ReactionsService {
     @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
   ) {}
 
-  // upsert: один пользователь — одна реакция (гарантия @@unique([postId, userId]))
+  // один пользователь — одна реакция (гарантия @@unique([postId, userId])).
+  // create → на конфликте update: уникальный индекс сам решает гонку параллельных
+  // react — «создателем» будет ровно один вызов, событие/уведомление не задвоятся
   async react(userId: string, postId: string, type: ReactionType) {
-    const reaction = await this.prisma.reaction.upsert({
-      where: { postId_userId: { postId, userId } },
-      create: { postId, userId, type },
-      update: { type }, // повторная реакция меняет тип, а не плодит строки
-    });
+    let reaction;
+    let created = false;
+    try {
+      reaction = await this.prisma.reaction.create({
+        data: { postId, userId, type },
+      });
+      created = true;
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002" // нарушение @@unique → реакция уже есть
+      ) {
+        reaction = await this.prisma.reaction.update({
+          where: { postId_userId: { postId, userId } },
+          data: { type }, // повторная реакция меняет тип, а не плодит строки
+        });
+      } else {
+        throw err;
+      }
+    }
 
-    // «события на странице»: подписчики этого поста увидят реакцию вживую
+    // смена типа существующей — НЕ новое событие и НЕ повод для уведомления
+    if (!created) return reaction;
+
+    // «события на странице»: подписчики поста двигают счётчик по этому событию,
+    // поэтому публикуем только ДОБАВЛЕНИЕ реакции, не смену её типа
     await this.pubsub.publish("reactionAdded", {
       reactionAdded: { postId, userId, type },
     });

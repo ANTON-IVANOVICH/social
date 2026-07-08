@@ -8,6 +8,8 @@ export const FeedQuery = graphql(`
     feed(limit: 20, cursor: $cursor) {
       items {
         id
+        # content нужен уровню списка (клиентский поиск); карточке — её фрагмент
+        content
         ...PostCard_post
       }
       nextCursor
