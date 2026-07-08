@@ -1,10 +1,10 @@
 import { useEffect } from "react";
-import { useBackgroundQuery, type QueryRef } from "@apollo/client/react";
-import { FeedQuery, type FeedResult } from "./feed.graphql";
+import { useBackgroundQuery } from "@apollo/client/react";
+import { FeedQuery, type FeedQueryRef, type FeedResult } from "./feed.graphql";
 import { PostAddedSub } from "./feed.subscriptions";
 
 export interface UseFeed {
-  queryRef: QueryRef<FeedResult>;
+  queryRef: FeedQueryRef;
   loadMore: (cursor: string) => Promise<unknown>;
   refetch: () => Promise<unknown>;
 }

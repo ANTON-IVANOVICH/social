@@ -1,6 +1,10 @@
 import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { useMutation } from "@apollo/client/react";
 import { apolloClient } from "../../shared/apollo/client";
+import {
+  purgePersistedCache,
+  resumePersistedCache,
+} from "../../shared/apollo/cache";
 import { wsClient } from "../../shared/apollo/ws-client";
 import { tokenStore } from "../../shared/auth/token-store";
 import { refreshSession } from "../../shared/auth/refresh";
@@ -59,6 +63,17 @@ async function bootstrapSession(): Promise<CurrentUser> {
   }
 }
 
+// Полная очистка локальной сессии: и при явном logout, и при рантайм-истечении
+// (onSessionExpired). КРИТИЧНО чистить ВСЁ — токен, in-memory кэш Apollo И его
+// снапшот в localStorage: иначе данные пользователя A осели бы на устройстве и
+// при cache-first-чтениях протекли бы следующему пользователю B на том же браузере.
+async function clearLocalSession(): Promise<void> {
+  tokenStore.clear();
+  await apolloClient.clearStore(); // in-memory кэш
+  await purgePersistedCache(); // снапшот в localStorage (+ пауза персиста)
+  wsClient.terminate(); // WS разлогиненного не держим
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   // use(Promise): САСПЕНДИТ дерево, пока сессия не определена (один раз при старте)
   const initialUser = use(getSessionPromise());
@@ -68,17 +83,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [registerMutation] = useMutation(RegisterDoc);
   const [logoutMutation] = useMutation(LogoutDoc);
 
-  // «refresh не удался» на рантайме → чистим сессию; RequireAuth уведёт на /login
+  // «refresh не удался» на рантайме = сессия истекла → та же полная очистка, что
+  // и при logout (не только токен!), иначе кэш прошлого пользователя утечёт
   useEffect(
     () =>
       onSessionExpired(() => {
-        tokenStore.clear();
         setUser(null);
+        void clearLocalSession();
       }),
     [],
   );
 
   const login = async (username: string, password: string) => {
+    // чистый старт: снимаем возможный остаточный кэш прошлого пользователя
+    // (напр. после истёкшей сессии) и снова включаем персист (после logout он на паузе)
+    await apolloClient.clearStore();
+    resumePersistedCache();
     const { data } = await loginMutation({
       variables: { input: { username, password } },
     });
@@ -103,10 +123,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     // бэкенд читает refresh из cookie, отзывает его и чистит cookie (access — из authLink)
     await logoutMutation().catch(() => {});
-    tokenStore.clear();
     setUser(null);
-    await apolloClient.clearStore(); // вычищаем кэш от данных прошлого пользователя
-    wsClient.terminate(); // закрываем WS — не держим сессию разлогиненного пользователя
+    await clearLocalSession(); // токен + in-memory кэш + снапшот localStorage + WS
   };
 
   // React Compiler сам стабилизирует идентичности — ручных useMemo/useCallback нет.

@@ -23,7 +23,7 @@ function ProfileContent({ username }: { username: string }) {
   // suspense-запрос: loading ловит <Suspense> выше, ошибка — ErrorBoundary
   const { data } = useSuspenseQuery(UserQuery, { variables: { username } });
   const { user: me } = useAuth();
-  const u = data.user;
+  const u = data.user; // на ошибке suspense-запрос бросает → ловит ErrorBoundary
 
   if (!u) return <div className="m-6">Пользователь не найден</div>;
 

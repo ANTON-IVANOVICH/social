@@ -1,5 +1,11 @@
 import { Suspense } from "react";
-import { Link, Outlet, useLocation, useNavigate } from "react-router";
+import {
+  Link,
+  Outlet,
+  useLocation,
+  useNavigate,
+  useNavigation,
+} from "react-router";
 import { Button } from "@heroui/react";
 import { useTheme } from "../shared/theme/useTheme";
 import { useAuth } from "../features/auth/AuthProvider";
@@ -13,10 +19,21 @@ export function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  // React Router резолвит route.lazy() в фазе навигации (не через Suspense),
+  // держа прежний экран смонтированным — <Suspense> в Layout это НЕ покрывает.
+  // Тонкая полоса прогресса даёт обратную связь на время загрузки чанка.
+  const navigation = useNavigation();
 
   return (
     <PresenceProvider>
       <div className="min-h-screen bg-background text-foreground">
+        {navigation.state === "loading" && (
+          <div
+            className="fixed inset-x-0 top-0 z-50 h-0.5 animate-pulse bg-primary"
+            role="progressbar"
+            aria-label="Загрузка страницы"
+          />
+        )}
         <header className="flex items-center justify-between border-b px-6 py-3">
           <Link to="/" className="text-lg font-semibold">
             Соцсеть

@@ -137,21 +137,20 @@ export function CommentThread({ postId }: { postId: string }) {
       if (!ev) return;
       const cacheId = client.cache.identify({ __typename: "Post", id: postId });
       if (ev.userId === me?.id) {
-        // моя реакция из ДРУГОЙ вкладки/устройства: если myReaction здесь уже
-        // совпадает — это эхо локального клика (учтён оптимистично), иначе
-        // синхронизируем и заливку сердца, и счётчик
-        let alreadyApplied = false;
+        // СВОЯ реакция (эхо своего же действия). Счётчик НЕ трогаем: cache.modify
+        // читает корневой слой, а оптимистичный лайк живёт в отдельном слое — в
+        // этой вкладке инкремент задвоил бы (эхо +1, затем ответ мутации +1). Свой
+        // счётчик уже ведут оптимистичный клик + ответ мутации. Синхронизируем лишь
+        // заливку сердца (идемпотентный set) — на случай, если действие пришло из
+        // другой вкладки; там счётчик подтянется рефетчем (то же принятое
+        // ограничение, что и с чужим unreact).
         client.cache.modify({
           id: cacheId,
-          fields: {
-            myReaction: (prev) => {
-              alreadyApplied = prev === ev.type;
-              return ev.type;
-            },
-          },
+          fields: { myReaction: () => ev.type },
         });
-        if (alreadyApplied) return;
+        return;
       }
+      // чужая реакция → двигаем общий счётчик
       client.cache.modify({
         id: cacheId,
         fields: { reactionCount: (n) => (n as number) + 1 },

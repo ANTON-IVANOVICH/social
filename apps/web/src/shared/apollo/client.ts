@@ -88,5 +88,11 @@ const link = split(
 export const apolloClient = new ApolloClient({
   link,
   cache, // нормализация + field policy для курсорной ленты (см. cache.ts)
+  // errorPolicy оставляем дефолтным ("none"): наши suspense-чтения (лента, пост,
+  // профиль) — «всё или ошибка», и на ошибке запрос ДОЛЖЕН бросить, чтобы её
+  // поймала ErrorBoundary с ретраем (архитектура ошибок этапов 2/6). errorPolicy
+  // "all" сделал бы промис resolved с data:undefined → границы мертвы, а ошибка
+  // молча превратилась бы в «не найдено» без повтора. Устойчивость даём слоями
+  // ErrorBoundary + onCaughtError/onUncaughtError, а не проглатыванием ошибок.
   devtools: { enabled: import.meta.env.DEV },
 });

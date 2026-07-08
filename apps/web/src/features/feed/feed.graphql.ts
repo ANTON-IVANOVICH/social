@@ -1,3 +1,4 @@
+import type { QueryRef } from "@apollo/client/react";
 import { type DocumentType, graphql } from "../../gql";
 
 // Запрос ленты спредит фрагмент PostCard_post (определён в post.fragments.ts).
@@ -19,3 +20,8 @@ export const FeedQuery = graphql(`
 
 // тип результата запроса (items — замаскированные ссылки на фрагмент PostCard_post)
 export type FeedResult = DocumentType<typeof FeedQuery>;
+
+// QueryRef ленты (общий тип для useFeed и FeedList). errorPolicy дефолтный →
+// на ошибке запрос бросает (ловит ErrorBoundary), а не отдаёт пустые данные,
+// поэтому состояние "empty" в типе не нужно.
+export type FeedQueryRef = QueryRef.ForQuery<typeof FeedQuery>;

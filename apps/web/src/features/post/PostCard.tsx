@@ -65,6 +65,13 @@ export function PostCard({
           >
             💬 {p.commentCount}
           </Button>
+          {/* пермалинк на отдельную страницу поста (ленивый чанк p/:id) */}
+          <Link
+            to={`/p/${p.id}`}
+            className="ml-auto text-sm text-default-500 hover:underline"
+          >
+            Открыть
+          </Link>
         </div>
         {showComments && <CommentThread postId={p.id} />}
       </Card.Footer>

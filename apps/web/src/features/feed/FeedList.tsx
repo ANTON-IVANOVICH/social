@@ -1,17 +1,18 @@
 import { useTransition } from "react";
-import { useReadQuery, type QueryRef } from "@apollo/client/react";
+import { useReadQuery } from "@apollo/client/react";
 import { Button } from "@heroui/react";
 import { SearchableFeed } from "./SearchableFeed";
-import { type FeedResult } from "./feed.graphql";
+import { type FeedQueryRef } from "./feed.graphql";
 
 export function FeedList({
   queryRef,
   loadMore,
 }: {
-  queryRef: QueryRef<FeedResult>;
+  queryRef: FeedQueryRef;
   loadMore: (cursor: string) => Promise<unknown>;
 }) {
-  // useReadQuery саспендит ТОЛЬКО этот компонент, пока данных нет
+  // useReadQuery саспендит ТОЛЬКО этот компонент, пока данных нет; на ошибке
+  // бросает → ловит ErrorBoundary в HomeRoute (с ретраем через refetch)
   const { data } = useReadQuery(queryRef);
   const { items, nextCursor } = data.feed;
   // isPending блокирует кнопку на время догрузки — иначе двойной клик дописал бы
