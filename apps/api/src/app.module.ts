@@ -7,6 +7,9 @@ import { ApolloServerPluginLandingPageLocalDefault } from "@apollo/server/plugin
 import { ApolloServerPluginLandingPageDisabled } from "@apollo/server/plugin/disabled";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
+import { EventEmitterModule } from "@nestjs/event-emitter";
+import { BullModule } from "@nestjs/bullmq";
+import { ScheduleModule } from "@nestjs/schedule";
 import { LoggerModule } from "nestjs-pino";
 import { Redis } from "ioredis";
 import { randomUUID } from "node:crypto";
@@ -33,6 +36,7 @@ import { NotificationsModule } from "./modules/notifications/notifications.modul
 import { FeedModule } from "./modules/feed/feed.module";
 import { PresenceModule } from "./modules/presence/presence.module";
 import { MediaModule } from "./modules/media/media.module";
+import { MaintenanceModule } from "./modules/maintenance/maintenance.module";
 import {
   SubscriptionContextService,
   SubscriptionExtra,
@@ -91,6 +95,30 @@ interface GraphqlWsContext {
     // ── инфраструктура реального времени ──
     RedisModule, // @Global: REDIS_CLIENT + пара pub/sub
     PubSubModule, // @Global: PUB_SUB (RedisPubSub) для подписок между инстансами
+
+    // ── фон и события ──
+    EventEmitterModule.forRoot(), // доменные события (развязка сервис ↔ побочные эффекты)
+    ScheduleModule.forRoot(), // @Cron планировщик (ставит задачи в очередь с фикс. jobId)
+    // BullMQ: свои коннекты к Redis (BullMQ сам заводит соединения с нужным
+    // maxRetriesPerRequest). Разбираем URL ПОЛНОСТЬЮ — иначе на проде с
+    // паролем/номером БД/TLS (rediss://) все фоновые задачи молча не подключились бы.
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const url = new URL(config.getOrThrow<string>("redisUrl"));
+        const db = url.pathname.replace(/^\//, "");
+        return {
+          connection: {
+            host: url.hostname,
+            port: Number(url.port) || 6379,
+            username: url.username || undefined,
+            password: url.password || undefined,
+            db: db ? Number(db) : undefined,
+            tls: url.protocol === "rediss:" ? {} : undefined,
+          },
+        };
+      },
+    }),
 
     // GraphQL — code-first, драйвер Apollo
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
@@ -203,6 +231,7 @@ interface GraphqlWsContext {
     FeedModule,
     PresenceModule, // ── presence + typing + аутентификация подписок ──
     MediaModule, // ── загрузка файлов (Upload scalar + sharp в фоне) ──
+    MaintenanceModule, // ── планировщик: тренды (кэш) + дайджесты ──
     // DataLoaderModule отдельно тащить не нужно — он импортируется внутри GraphQLModule
   ],
   providers: [

@@ -1,9 +1,8 @@
-import { Inject, Injectable } from "@nestjs/common";
-import { RedisPubSub } from "graphql-redis-subscriptions";
+import { Injectable } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../../prisma/prisma.service";
-import { PUB_SUB } from "../../pubsub/pubsub.module";
-import { FollowsService } from "../users/follows.service";
 import { encodeCursor, decodeCursor } from "../../common/cursor/cursor.util";
+import { PostCreatedEvent } from "../../events/post-created.event";
 import { CreatePostInput } from "./dto/create-post.input";
 import { UpdatePostInput } from "./dto/update-post.input";
 
@@ -16,8 +15,7 @@ function extractHashtags(content: string): string[] {
 export class PostsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly follows: FollowsService,
-    @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
+    private readonly events: EventEmitter2,
   ) {}
 
   // Создание поста + извлечение хэштегов — атомарно, в одной транзакции
@@ -54,10 +52,15 @@ export class PostsService {
       return created;
     });
 
-    // публикуем ПОСЛЕ коммита транзакции (внутри tx нельзя — событие ушло бы до
-    // фиксации). «Лучшими усилиями»: падение между commit и publish теряет событие,
-    // но пост уже в БД и придёт через query feed. Гарантию даст outbox-паттерн позже.
-    await this.pubsub.publish("postAdded", { postAdded: post, authorId });
+    // эмитим ПОСЛЕ коммита (внутри tx событие ушло бы до фиксации). fire-and-forget:
+    // пользователь не ждёт побочных эффектов — real-time publish и fan-out по лентам
+    // делает слушатель (FanoutListener). «Лучшими усилиями»: падение между commit и
+    // обработкой теряет событие, но пост уже в БД и придёт через query feed —
+    // гарантию даст outbox-паттерн на этапе 6.
+    this.events.emit(
+      PostCreatedEvent.EVENT,
+      new PostCreatedEvent(post, authorId),
+    );
     return post;
   }
 
@@ -92,27 +95,9 @@ export class PostsService {
     return { items, nextCursor };
   }
 
-  // Персонализированная лента: посты подписок + свои (за auth-guard'ом)
-  async feedForUser(userId: string, limit: number, cursor?: string) {
-    const followingIds = await this.follows.followingIds(userId);
-    const authorIds = [...followingIds, userId]; // подписки + свои посты
-
-    const decoded = cursor ? decodeCursor(cursor) : null;
-    const rows = await this.prisma.post.findMany({
-      where: { authorId: { in: authorIds } },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: limit + 1,
-      ...(decoded ? { cursor: { id: decoded }, skip: 1 } : {}),
-    });
-
-    const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-    const nextCursor = hasMore
-      ? encodeCursor(items[items.length - 1].id)
-      : null;
-
-    return { items, nextCursor };
-  }
+  // Персонализированная лента подписок переехала в FeedService.readFeed
+  // (материализованный fan-out on write); здесь оставлена только глобальная лента
+  // для discover. FollowsService всё ещё нужен модулю ленты (followerIds/backfill).
 
   update(id: string, input: UpdatePostInput) {
     return this.prisma.post.update({ where: { id }, data: { ...input } });

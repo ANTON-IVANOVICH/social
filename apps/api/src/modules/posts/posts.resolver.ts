@@ -23,10 +23,8 @@ import { PUB_SUB } from "../../pubsub/pubsub.module";
 import { User } from "../users/models/user.model";
 import { Comment } from "../comments/models/comment.model";
 import { Post } from "./models/post.model";
-import { PostConnection } from "./models/post-connection.model";
 import { CreatePostInput } from "./dto/create-post.input";
 import { UpdatePostInput } from "./dto/update-post.input";
-import { FeedArgs } from "./dto/feed.args";
 import { PostsService } from "./posts.service";
 import { PostOwnerGuard } from "./guards/post-owner.guard";
 
@@ -46,12 +44,6 @@ export class PostsResolver {
     private readonly posts: PostsService,
     @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
   ) {}
-
-  @Query(() => PostConnection)
-  @Auth() // лента — только для залогиненных, по их подпискам
-  feed(@Args() { limit, cursor }: FeedArgs, @CurrentUser() user: AuthUser) {
-    return this.posts.feedForUser(user.userId, limit, cursor);
-  }
 
   @Query(() => Post, { nullable: true }) // публично: отдельный пост можно посмотреть без входа
   post(@Args("id", { type: () => ID }) id: string) {

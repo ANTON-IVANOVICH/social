@@ -1,13 +1,13 @@
-import { Inject, Injectable } from "@nestjs/common";
-import { RedisPubSub } from "graphql-redis-subscriptions";
+import { Injectable } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../../prisma/prisma.service";
-import { PUB_SUB } from "../../pubsub/pubsub.module";
+import { CommentCreatedEvent } from "../../events/comment-created.event";
 
 @Injectable()
 export class CommentsService {
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
+    private readonly events: EventEmitter2,
   ) {}
 
   async create(authorId: string, postId: string, content: string) {
@@ -15,28 +15,16 @@ export class CommentsService {
       data: { authorId, postId, content },
     });
 
-    // «события на странице»: подписчики этого поста получат комментарий вживую
-    await this.pubsub.publish("commentAdded", { commentAdded: comment });
-
-    // уведомляем автора поста (но не самого себя за комментарий к своему посту)
+    // адресат уведомления — автор поста (тянем для события); real-time publish
+    // (commentAdded) и запись уведомления делает слушатель
     const post = await this.prisma.post.findUnique({
       where: { id: postId },
       select: { authorId: true },
     });
-    if (post && post.authorId !== authorId) {
-      const notification = await this.prisma.notification.create({
-        data: {
-          recipientId: post.authorId,
-          actorId: authorId,
-          kind: "COMMENT",
-          postId,
-        },
-      });
-      await this.pubsub.publish("newNotification", {
-        newNotification: notification,
-        recipientId: post.authorId,
-      });
-    }
+    this.events.emit(
+      CommentCreatedEvent.EVENT,
+      new CommentCreatedEvent(comment, post?.authorId ?? authorId),
+    );
 
     return comment;
   }

@@ -1,44 +1,55 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
-import { RedisPubSub } from "graphql-redis-subscriptions";
+import { BadRequestException, Injectable } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
-import { PUB_SUB } from "../../pubsub/pubsub.module";
+import { UserFollowedEvent } from "../../events/user-followed.event";
+import { UserUnfollowedEvent } from "../../events/user-unfollowed.event";
 
 @Injectable()
 export class FollowsService {
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
+    private readonly events: EventEmitter2,
   ) {}
 
-  // Подписка + уведомление — атомарно. Уведомление пока пишем синхронно;
-  // позже это уедет в доменное событие + очередь (fan-out).
+  // Подписка. Уведомление больше НЕ пишем здесь — сервис выполняет доменное
+  // действие и эмитит событие; уведомление + real-time publish делает слушатель.
+  // create → на конфликте НЕ эмитим: повторный follow — no-op, иначе каждый
+  // повторный клик плодил бы дубль FOLLOW-уведомления.
   async follow(followerId: string, followingId: string): Promise<boolean> {
     if (followerId === followingId) {
       throw new BadRequestException("Нельзя подписаться на самого себя");
     }
-
-    const { notification } = await this.prisma.$transaction(async (tx) => {
-      const follow = await tx.follow.upsert({
-        where: { followerId_followingId: { followerId, followingId } },
-        create: { followerId, followingId },
-        update: {},
-      });
-      const notification = await tx.notification.create({
-        data: { recipientId: followingId, actorId: followerId, kind: "FOLLOW" },
-      });
-      return { follow, notification };
-    });
-
-    // публикуем уведомление ПОСЛЕ коммита транзакции
-    await this.pubsub.publish("newNotification", {
-      newNotification: notification,
-      recipientId: followingId,
-    });
+    try {
+      await this.prisma.follow.create({ data: { followerId, followingId } });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002" // уже подписан → без события
+      ) {
+        return true;
+      }
+      throw err;
+    }
+    this.events.emit(
+      UserFollowedEvent.EVENT,
+      new UserFollowedEvent(followerId, followingId),
+    );
     return true;
   }
 
   async unfollow(followerId: string, followingId: string): Promise<boolean> {
-    await this.prisma.follow.deleteMany({ where: { followerId, followingId } });
+    const { count } = await this.prisma.follow.deleteMany({
+      where: { followerId, followingId },
+    });
+    // подписки не стало → сбросить материализованную ленту, иначе посты бывшей
+    // подписки «застрянут» в Redis-наборе (пересоберётся из БД на следующем чтении)
+    if (count > 0) {
+      this.events.emit(
+        UserUnfollowedEvent.EVENT,
+        new UserUnfollowedEvent(followerId),
+      );
+    }
     return true;
   }
 
@@ -49,5 +60,14 @@ export class FollowsService {
       select: { followingId: true },
     });
     return rows.map((r) => r.followingId);
+  }
+
+  // зеркало followingIds: кто подписан на автора — для fan-out поста по их лентам
+  async followerIds(userId: string): Promise<string[]> {
+    const rows = await this.prisma.follow.findMany({
+      where: { followingId: userId },
+      select: { followerId: true },
+    });
+    return rows.map((r) => r.followerId);
   }
 }

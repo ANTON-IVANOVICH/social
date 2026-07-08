@@ -1,14 +1,14 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { Prisma, ReactionType } from "@prisma/client";
-import { RedisPubSub } from "graphql-redis-subscriptions";
 import { PrismaService } from "../../prisma/prisma.service";
-import { PUB_SUB } from "../../pubsub/pubsub.module";
+import { PostReactedEvent } from "../../events/post-reacted.event";
 
 @Injectable()
 export class ReactionsService {
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
+    private readonly events: EventEmitter2,
   ) {}
 
   // один пользователь — одна реакция (гарантия @@unique([postId, userId])).
@@ -39,30 +39,17 @@ export class ReactionsService {
     // смена типа существующей — НЕ новое событие и НЕ повод для уведомления
     if (!created) return reaction;
 
-    // «события на странице»: подписчики поста двигают счётчик по этому событию,
-    // поэтому публикуем только ДОБАВЛЕНИЕ реакции, не смену её типа
-    await this.pubsub.publish("reactionAdded", {
-      reactionAdded: { postId, userId, type },
-    });
-
-    // уведомляем автора поста (но не самого себя за реакцию на свой пост)
+    // побочные эффекты (real-time publish + уведомление автору) — в слушателе;
+    // сервис только эмитит. Автора поста тянем для адресата уведомления.
     const post = await this.prisma.post.findUnique({
       where: { id: postId },
       select: { authorId: true },
     });
-    if (post && post.authorId !== userId) {
-      const notification = await this.prisma.notification.create({
-        data: {
-          recipientId: post.authorId,
-          actorId: userId,
-          kind: "REACTION",
-          postId,
-        },
-      });
-      await this.pubsub.publish("newNotification", {
-        newNotification: notification,
-        recipientId: post.authorId,
-      });
+    if (post) {
+      this.events.emit(
+        PostReactedEvent.EVENT,
+        new PostReactedEvent(postId, userId, post.authorId, type),
+      );
     }
 
     return reaction;
