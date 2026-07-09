@@ -19,6 +19,8 @@ import { Post } from "../../posts/models/post.model";
         return ReactionNotification;
       case "COMMENT":
         return CommentNotification;
+      case "MENTION":
+        return MentionNotification;
     }
   },
 })
@@ -52,6 +54,17 @@ export class ReactionNotification extends Notification {
 export class CommentNotification extends Notification {
   @Field(() => User)
   actor: User;
+
+  @Field(() => Post)
+  post: Post;
+}
+
+// «@username в тексте поста». Рождается не в сервисе, а в САГЕ: доменное событие
+// post.created → команда разбора упоминаний → уведомления упомянутым.
+@ObjectType({ implements: () => [Notification] })
+export class MentionNotification extends Notification {
+  @Field(() => User)
+  actor: User; // кто упомянул
 
   @Field(() => Post)
   post: Post;

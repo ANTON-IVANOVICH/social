@@ -4,8 +4,9 @@ import { PostsModule } from "../posts/posts.module";
 import { UsersModule } from "../users/users.module";
 import { FeedService } from "./feed.service";
 import { FeedResolver } from "./feed.resolver";
-import { FanoutListener } from "./fanout.listener";
+import { FeedListener } from "./feed.listener";
 import { FeedFanoutProcessor } from "./feed-fanout.processor";
+import { GetFeedHandler } from "./cqrs/get-feed.handler";
 import { FANOUT_QUEUE } from "./feed.constants";
 
 @Module({
@@ -23,6 +24,15 @@ import { FANOUT_QUEUE } from "./feed.constants";
       },
     }),
   ],
-  providers: [FeedService, FeedResolver, FanoutListener, FeedFanoutProcessor],
+  providers: [
+    FeedService,
+    FeedResolver,
+    FeedListener,
+    FeedFanoutProcessor,
+    GetFeedHandler,
+  ],
+  // Очередь fan-out нужна OutboxModule: relayer — единственный, кто её наполняет.
+  // Реэкспортируем BullModule, чтобы не заводить второй Queue (и второй коннект).
+  exports: [BullModule],
 })
 export class FeedModule {}

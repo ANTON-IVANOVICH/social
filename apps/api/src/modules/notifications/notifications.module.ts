@@ -6,9 +6,10 @@ import {
   FollowNotificationResolver,
   ReactionNotificationResolver,
   CommentNotificationResolver,
+  MentionNotificationResolver,
 } from "./notifications.resolver";
 import { NotificationListener } from "./notification.listener";
-import { NotificationDeliveryProcessor } from "./notification-delivery.processor";
+import { NotificationsProcessor } from "./notifications.processor";
 import { NOTIFICATIONS_QUEUE } from "./notifications.constants";
 
 @Module({
@@ -30,8 +31,13 @@ import { NOTIFICATIONS_QUEUE } from "./notifications.constants";
     FollowNotificationResolver,
     ReactionNotificationResolver,
     CommentNotificationResolver,
+    MentionNotificationResolver,
     NotificationListener,
-    NotificationDeliveryProcessor,
+    NotificationsProcessor,
   ],
+  // NotificationsService — саге упоминаний (PostsModule): уведомления рождаются той
+  // же дорогой, что и у слушателя. BullModule — релееру (OutboxModule): гарантированный
+  // разбор упоминаний ставится в эту очередь.
+  exports: [NotificationsService, BullModule],
 })
 export class NotificationsModule {}

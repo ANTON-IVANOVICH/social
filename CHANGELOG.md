@@ -2,6 +2,71 @@
 
 Заметные изменения проекта, новые сверху. Формат свободный: дата — что изменилось и зачем.
 
+## 2026-07-09 — Бэкенд: капстоун — CQRS, Outbox, Apollo Federation
+
+Финальный этап. Три продакшен-паттерна, каждый закрывает конкретный пробел.
+
+- **CQRS для агрегата `Post`** (`@nestjs/cqrs` 11): `CreatePostCommand`/`UpdatePostCommand`/
+  `DeletePostCommand` + `ProcessMentionsCommand`; `PostAggregate` (`AggregateRoot`) применяет
+  `PostCreatedDomainEvent` и публикует его в `commit()`; `@EventsHandler` шлёт `postAdded` в
+  RedisPubSub; **сага** (`@Saga` + `ofType`) превращает событие в команду разбора упоминаний;
+  чтение ленты — через `QueryBus` (`GetFeedQuery`). `PostsService` стал read-only, вся запись
+  живёт в обработчиках команд. Применён **точечно**: `follow`/`react`/`comment` осознанно
+  остались на лёгком `event-emitter` — так видно, когда CQRS оправдан, а когда избыточен.
+- **Упоминания `@username`:** новый вид уведомления `MENTION` (Prisma-enum + `MentionNotification`
+  как `ObjectType implements Notification` + ветка `resolveType` + резолвер + фронтовый фрагмент).
+  Матч регистронезависимый, себя не уведомляем, потолок 20 упоминаний на пост.
+- **Единая точка рождения уведомления:** `NotificationsService.notify/notifyMany` (запись +
+  `newNotification` + постановка доставки). `NotificationListener` перестал дублировать этот
+  код четырежды; сага зовёт то же самое.
+- **Transactional Outbox:** модель `OutboxEvent` (`status`/`attempts`/`lastError`, индекс
+  `(status,createdAt)`). `CreatePostHandler` пишет пост, хэштеги и outbox-строку **в одной
+  транзакции** — зазор «коммит ↔ публикация события» из прошлого этапа закрыт. `OutboxRelayer`
+  (`@Interval(1000)`) забирает пачку `SELECT … FOR UPDATE SKIP LOCKED` (несколько инстансов
+  разбирают РАЗНЫЕ строки — таблица работает распределённой очередью), ставит задачи в BullMQ
+  и помечает строки `processed` — всё в одной транзакции: упал процесс посередине → откат →
+  строки снова `pending`. Повтор безопасен: фиксированный `jobId` дедуплицирует задачу.
+  Fan-out ленты переехал с best-effort (`event-emitter` → publish + enqueue) на гарантированный
+  путь; real-time `postAdded` осознанно остался best-effort. `FanoutListener` → `FeedListener`
+  (только `user.unfollowed`), класс-событие `PostCreatedEvent` удалён.
+- **Apollo Federation** — новый workspace `apps/federation`: три subgraph'а (`users` :4001,
+  `posts` :4002, `engagement` :4003) + gateway (:4000, `IntrospectAndCompose`). `users` владеет
+  `User` (`@key` + `@ResolveReference`), `posts` владеет `Post`/`Comment` и **расширяет** чужой
+  `User` полем `posts` (`@extends` + `@external id`), `engagement` расширяет чужой `Post`
+  полями `reactionCount`/`reactions`. Ссылки-представления `{ __typename, id }`; DataLoader'ы
+  под `_entities` (gateway шлёт представления пачкой — иначе N+1). Gateway **пробрасывает**
+  `Authorization` (`RemoteGraphQLDataSource.willSendRequest`), а токен проверяет каждый subgraph
+  сам — gateway не точка доверия. Монолит не разбирался: федерация живёт **рядом** с ним.
+  Причина честная — классический `@apollo/gateway` не федерирует подписки, а приложение на них
+  завязано; для федеративных подписок нужен Apollo Router.
+
+**По итогам адверсариального ревью (15 находок, 6 подтверждено, 9 отклонено — все исправлены):**
+
+- **`User.posts` раздавал приватные посты (HIGH):** новое поле федерации выбирало посты автора
+  без фильтра `visibility` и без зрителя, а `Query.user(username)` не требует токена → аноним
+  читал `PRIVATE`-посты кого угодно. В монолите поля `User.posts` нет вовсе, то есть это была
+  новая дыра, а не паритет. Теперь только `PUBLIC`.
+- **Федерация была без лимитов (HIGH):** supergraph замкнут циклом `Post.author → User.posts → …`,
+  причём звенья в разных subgraph'ах, и на каждом уровне gateway делает новый `_entities`.
+  Один короткий запрос без токена раскручивался в экспоненциальный ответ. Добавлен `depthLimit`
+  в gateway **и** в каждый subgraph; `User.posts` получил потолок **на каждого автора** через
+  оконную функцию `row_number()` (обычный `take` обрезал бы выборку целиком, и посты «тихого»
+  автора исчезали бы из-за плодовитого соседа); subgraph'ы слушают loopback — наружу смотрит
+  только gateway; CORS gateway в проде — по allowlist.
+- **MENTION-уведомления терялись молча (MEDIUM):** fan-out durable, а упоминания рождались
+  только сагой (in-process) — падение между коммитом и сагой стирало их навсегда. Теперь
+  relayer ставит из той же outbox-строки задачу `mentions`, а повтор гасит новый уникальный
+  `dedupeKey` (`skipDuplicates`): сага — быстрый путь, outbox — гарантия. `NULL` не конфликтует
+  с `NULL` в PostgreSQL, поэтому обычные уведомления (комментарий за комментарием) не схлопнулись.
+- **`outbox_events` рос бесконечно (LOW):** разобранные строки — журнал, а не данные. Добавлен
+  почасовой `prune` (удаление `processed`/`failed` старше 7 дней, попадает в существующий индекс).
+- **Сбой рассылки одного уведомления ронял остальные из пачки (LOW):** `dispatch` обёрнут в
+  `try/catch` — уведомление уже в БД, и сорванный `publish` не должен утаскивать соседей.
+- Отклонено 9, в том числе: «транзиентный Redis за 5с хоронит fan-out» (ioredis копит команды в
+  offline-очереди, а `busy`-guard не даёт тикам наслаиваться), «задержка fan-out на такт релеера —
+  регрессия» (read-путь ленты не менялся; бэкофилл из БД закрывает окно), «`ALTER TYPE … ADD VALUE`
+  упадёт в транзакции» (ограничение снято в PostgreSQL 12, у нас 16).
+
 ## 2026-07-09 — Бэкенд: фон, события и масштабирование
 
 Всё, что не должно блокировать действие пользователя, вынесено в фон.

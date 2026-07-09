@@ -11,7 +11,8 @@ Apollo Client фронтенд, связанные общим GraphQL-контр
 social-platform/
 ├── apps/
 │   ├── api/          # NestJS бэкенд (GraphQL Apollo, code-first)
-│   └── web/          # React 19 + Vite 8 SPA (Apollo Client 4, HeroUI v3)
+│   ├── web/          # React 19 + Vite 8 SPA (Apollo Client 4, HeroUI v3)
+│   └── federation/   # Apollo Federation: 3 subgraph'а + gateway (демо, рядом с монолитом)
 ├── packages/         # общие пакеты (появятся позже: graphql-контракт, tsconfig-пресеты)
 ├── package.json      # корневой workspace
 ├── turbo.json        # оркестрация задач (codegen фронта зависит от schema.gql бэка)
@@ -56,6 +57,32 @@ social-platform/
   (`@nestjs/schedule`) по схеме «cron ставит задачу с фикс. jobId — воркер выполняет один раз»
   (распределённый замок); **тренды** — топ хэштегов сырым SQL (`$queryRaw`) с кэшем в Redis,
   пересчёт по расписанию (query `trending`).
+- **CQRS для агрегата `Post`** (`@nestjs/cqrs`): запись через `CommandBus` (обработчик владеет
+  транзакцией), чтение через `QueryBus` (`GetFeedQuery`), инварианты и доменные события — в
+  `PostAggregate` (`AggregateRoot`), быстрые in-process реакции — `@EventsHandler`, оркестрация —
+  **сага** (`PostCreatedDomainEvent` → `ProcessMentionsCommand` → `MENTION`-уведомления).
+  `PostsService` стал read-only. Простые агрегаты (follow/react/comment) осознанно остались на
+  лёгком `event-emitter` — CQRS применён точечно, там где он оправдан.
+- **Transactional outbox:** пост, хэштеги и строка `outbox_events` пишутся **одной транзакцией**;
+  `OutboxRelayer` (`@Interval`, `SELECT … FOR UPDATE SKIP LOCKED` — Postgres как распределённая
+  очередь) доставляет событие в BullMQ. Fan-out ленты переехал с best-effort на **гарантированный**
+  путь: потерять его теперь можно только вместе с самим постом. Ядовитая строка не блокирует
+  голову очереди (построчный `catch` + `attempts` → `failed`).
+
+### Федерация (`apps/federation`)
+
+Отдельное развёртывание **рядом** с монолитом: `users` (:4001) владеет `User`, `posts` (:4002) —
+`Post`/`Comment` и расширяет `User` полем `posts`, `engagement` (:4003) расширяет `Post`
+счётчиком реакций; gateway (:4000) собирает supergraph через `IntrospectAndCompose`.
+
+- Сущности с `@key(fields: "id")`, reference-резолверы (`@ResolveReference`), расширение чужого
+  типа через `@extends`/`@external`, ссылки-представления `{ __typename, id }`.
+- **DataLoader под `_entities`**: gateway шлёт представления пачкой — без батчинга это N+1.
+- **Auth:** gateway только пробрасывает `Authorization`, токен проверяет каждый subgraph сам
+  (общий `JWT_SECRET` с монолитом; токены выдаёт монолит).
+- **Честная оговорка:** классический `@apollo/gateway` **не федерирует подписки**. Для
+  subscription-тяжёлого приложения это делает федерацию решением «по необходимости», а не
+  «по умолчанию», — потому монолит и остался основным API фронтенда.
 
 ### Фронтенд (`apps/web`)
 
@@ -136,6 +163,12 @@ yarn workspace @social/web codegen   # читает apps/api/src/schema.gql → 
 # 5. Запустить всё в режиме разработки
 yarn dev                       # через Turborepo: api (:3000) + web (:5173)
 # или точечно: yarn workspace @social/api dev  /  yarn workspace @social/web dev
+
+# 6. (опционально) Федерация — отдельное развёртывание рядом с монолитом
+cp apps/federation/.env.example apps/federation/.env
+# JWT_SECRET и DATABASE_URL должны совпадать с apps/api/.env: токены выдаёт монолит,
+# БД у subgraph'ов та же
+yarn workspace @social/federation supergraph   # users:4001 posts:4002 engagement:4003 → gateway:4000
 ```
 
 > Postgres (`social-postgres-1`, порт **5432**) и Redis (`social-redis-1`, порт **6379**)
@@ -196,16 +229,17 @@ curl http://localhost:3000/graphql \
 
 ## Полезные команды
 
-| Команда                                     | Что делает                                 |
-| ------------------------------------------- | ------------------------------------------ |
-| `yarn dev`                                  | dev-режим всех приложений (watch)          |
-| `yarn build` / `yarn typecheck`             | сборка / проверка типов по монорепо        |
-| `yarn workspace @social/api db:up`          | поднять Postgres + Redis в Docker          |
-| `yarn workspace @social/api db:down`        | остановить контейнеры                      |
-| `yarn workspace @social/api prisma:migrate` | создать/применить миграцию (`migrate dev`) |
-| `yarn workspace @social/api prisma:studio`  | визуальный браузер БД                      |
-| `yarn workspace @social/api test:e2e`       | e2e: auth+подписки (Postgres+Redis)        |
-| `yarn workspace @social/web dev`            | фронт (Vite) на `localhost:5173`           |
-| `yarn workspace @social/web codegen`        | типы из `apps/api/src/schema.gql`          |
-| `yarn workspace @social/web build`          | codegen + tsc + vite build                 |
-| `yarn workspace @social/<app> <скрипт>`     | запуск скрипта конкретного приложения      |
+| Команда                                        | Что делает                                 |
+| ---------------------------------------------- | ------------------------------------------ |
+| `yarn dev`                                     | dev-режим всех приложений (watch)          |
+| `yarn build` / `yarn typecheck`                | сборка / проверка типов по монорепо        |
+| `yarn workspace @social/api db:up`             | поднять Postgres + Redis в Docker          |
+| `yarn workspace @social/api db:down`           | остановить контейнеры                      |
+| `yarn workspace @social/api prisma:migrate`    | создать/применить миграцию (`migrate dev`) |
+| `yarn workspace @social/api prisma:studio`     | визуальный браузер БД                      |
+| `yarn workspace @social/api test:e2e`          | e2e: auth+подписки (Postgres+Redis)        |
+| `yarn workspace @social/web dev`               | фронт (Vite) на `localhost:5173`           |
+| `yarn workspace @social/web codegen`           | типы из `apps/api/src/schema.gql`          |
+| `yarn workspace @social/web build`             | codegen + tsc + vite build                 |
+| `yarn workspace @social/federation supergraph` | 3 subgraph'а + gateway на `localhost:4000` |
+| `yarn workspace @social/<app> <скрипт>`        | запуск скрипта конкретного приложения      |

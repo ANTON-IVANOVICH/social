@@ -1,0 +1,37 @@
+{
+  "name": "@social/federation",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "start:users": "node --env-file-if-exists=.env dist/apps/users/main.js",
+    "start:posts": "node --env-file-if-exists=.env dist/apps/posts/main.js",
+    "start:engagement": "node --env-file-if-exists=.env dist/apps/engagement/main.js",
+    "start:gateway": "node --env-file-if-exists=.env dist/apps/gateway/main.js",
+    "supergraph": "tsc -p tsconfig.json && node scripts/dev-all.mjs"
+  },
+  "dependencies": {
+    "@apollo/gateway": "^2.14.2",
+    "@apollo/server": "^5.0.0",
+    "@apollo/subgraph": "^2.14.2",
+    "@as-integrations/express5": "^1.1.2",
+    "@nestjs/apollo": "^13.0.0",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/graphql": "^13.0.0",
+    "@nestjs/jwt": "^11.0.2",
+    "@nestjs/platform-express": "^11.0.0",
+    "@prisma/client": "^6",
+    "dataloader": "^2.2.3",
+    "express": "^5.2.1",
+    "graphql": "^16.11.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

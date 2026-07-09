@@ -22,6 +22,7 @@ import {
   FollowNotification,
   ReactionNotification,
   CommentNotification,
+  MentionNotification,
 } from "./models/notification.model";
 import { NotificationsService } from "./notifications.service";
 
@@ -95,6 +96,23 @@ export class ReactionNotificationResolver {
 // CommentNotification резолвится так же, как ReactionNotification (actor + post)
 @Resolver(() => CommentNotification)
 export class CommentNotificationResolver {
+  @ResolveField(() => User)
+  actor(
+    @Parent() n: NotificationRow,
+    @Context("loaders") loaders: IDataLoaders,
+  ) {
+    return loaders.userById.load(n.actorId);
+  }
+
+  @ResolveField(() => Post)
+  post(@Parent() n: NotificationRow, @Context("loaders") loaders: IDataLoaders) {
+    return loaders.postById.load(n.postId!);
+  }
+}
+
+// MentionNotification — тоже actor + post (упомянувший и пост с упоминанием)
+@Resolver(() => MentionNotification)
+export class MentionNotificationResolver {
   @ResolveField(() => User)
   actor(
     @Parent() n: NotificationRow,

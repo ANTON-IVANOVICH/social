@@ -11,6 +11,7 @@ import {
   Resolver,
   Subscription,
 } from "@nestjs/graphql";
+import { CommandBus } from "@nestjs/cqrs";
 import { ReactionType } from "@prisma/client";
 import { RedisPubSub } from "graphql-redis-subscriptions";
 import { Auth } from "../../common/decorators/auth.decorator";
@@ -27,6 +28,9 @@ import { CreatePostInput } from "./dto/create-post.input";
 import { UpdatePostInput } from "./dto/update-post.input";
 import { PostsService } from "./posts.service";
 import { PostOwnerGuard } from "./guards/post-owner.guard";
+import { CreatePostCommand } from "./cqrs/commands/create-post.command";
+import { UpdatePostCommand } from "./cqrs/commands/update-post.command";
+import { DeletePostCommand } from "./cqrs/commands/delete-post.command";
 
 interface PostAddedPayload {
   postAdded: Post;
@@ -38,10 +42,15 @@ interface SubContext {
   followingIds?: Set<string>;
 }
 
+// Запись и чтение идут разными путями: мутации диспетчеризуют КОМАНДЫ в шину
+// (обработчик владеет транзакцией и доменными событиями), read-путь дёргает
+// PostsService напрямую. PUB_SUB здесь остаётся только ради итератора подписки —
+// публикует событие теперь обработчик, а не резолвер.
 @Resolver(() => Post)
 export class PostsResolver {
   constructor(
     private readonly posts: PostsService,
+    private readonly commandBus: CommandBus,
     @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
   ) {}
 
@@ -73,7 +82,7 @@ export class PostsResolver {
     @CurrentUser() user: AuthUser,
   ) {
     // authorId больше НЕ аргумент — берём из токена
-    return this.posts.create(user.userId, input);
+    return this.commandBus.execute(new CreatePostCommand(user.userId, input));
   }
 
   @Mutation(() => Post)
@@ -83,13 +92,13 @@ export class PostsResolver {
     @Args("id", { type: () => ID }) id: string,
     @Args("input") input: UpdatePostInput,
   ) {
-    return this.posts.update(id, input);
+    return this.commandBus.execute(new UpdatePostCommand(id, input));
   }
 
   @Mutation(() => Boolean)
   @UseGuards(GqlAuthGuard, PostOwnerGuard)
   deletePost(@Args("id", { type: () => ID }) id: string) {
-    return this.posts.delete(id);
+    return this.commandBus.execute(new DeletePostCommand(id));
   }
 
   // ── field-резолверы (без guard'ов; user доступен из контекста корневого резолвера) ──

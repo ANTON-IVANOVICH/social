@@ -9,6 +9,7 @@ import { ThrottlerModule } from "@nestjs/throttler";
 import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { BullModule } from "@nestjs/bullmq";
+import { CqrsModule } from "@nestjs/cqrs";
 import { ScheduleModule } from "@nestjs/schedule";
 import { LoggerModule } from "nestjs-pino";
 import { Redis } from "ioredis";
@@ -37,6 +38,7 @@ import { FeedModule } from "./modules/feed/feed.module";
 import { PresenceModule } from "./modules/presence/presence.module";
 import { MediaModule } from "./modules/media/media.module";
 import { MaintenanceModule } from "./modules/maintenance/maintenance.module";
+import { OutboxModule } from "./modules/outbox/outbox.module";
 import {
   SubscriptionContextService,
   SubscriptionExtra,
@@ -97,6 +99,10 @@ interface GraphqlWsContext {
     PubSubModule, // @Global: PUB_SUB (RedisPubSub) для подписок между инстансами
 
     // ── фон и события ──
+    // Две шины сосуществуют осознанно. EventEmitter — лёгкая развязка для простых
+    // агрегатов (follow/react/comment). CQRS — полный набор для самого нагруженного
+    // на запись агрегата Post: команды, агрегат, доменные события, саги.
+    CqrsModule.forRoot(), // global: CommandBus/QueryBus/EventBus/EventPublisher всюду
     EventEmitterModule.forRoot(), // доменные события (развязка сервис ↔ побочные эффекты)
     ScheduleModule.forRoot(), // @Cron планировщик (ставит задачи в очередь с фикс. jobId)
     // BullMQ: свои коннекты к Redis (BullMQ сам заводит соединения с нужным
@@ -232,6 +238,7 @@ interface GraphqlWsContext {
     PresenceModule, // ── presence + typing + аутентификация подписок ──
     MediaModule, // ── загрузка файлов (Upload scalar + sharp в фоне) ──
     MaintenanceModule, // ── планировщик: тренды (кэш) + дайджесты ──
+    OutboxModule, // ── гарантированная доставка событий (relayer → очередь) ──
     // DataLoaderModule отдельно тащить не нужно — он импортируется внутри GraphQLModule
   ],
   providers: [

@@ -25,6 +25,7 @@ enum NotificationKind {
   FOLLOW
   REACTION
   COMMENT
+  MENTION
 }
 
 enum UserRole {
@@ -166,6 +167,31 @@ model Notification {
   read        Boolean          @default(false)
   createdAt   DateTime         @default(now())
 
+  // Ключ идемпотентности для уведомлений, которые могут родиться дважды: быстрый
+  // путь (сага) и гарантированный (outbox). NULL не конфликтует с NULL в PostgreSQL,
+  // поэтому обычные уведомления (комментарий за комментарием) не схлопываются —
+  // они и должны появляться каждый раз. Заполняют его только упоминания.
+  dedupeKey String? @unique
+
   @@index([recipientId, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+// Transactional outbox: строка пишется в ОДНОЙ транзакции с самой сущностью.
+// Гарантия «либо и запись, и событие, либо ничего»: между коммитом и публикацией
+// больше нет зазора, в котором событие можно потерять. Relayer вычитывает pending
+// (FOR UPDATE SKIP LOCKED — таблица работает распределённой очередью) и доставляет.
+model OutboxEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  type        String // 'post.created' и т.п.
+  payload     Json
+  status      String    @default("pending") // pending | processed | failed
+  attempts    Int       @default(0)
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+
+  // порядок разбора очереди: самые старые pending — первыми
+  @@index([status, createdAt])
+  @@map("outbox_events")
 }

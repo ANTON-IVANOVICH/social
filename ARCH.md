@@ -4,9 +4,10 @@
 
 ```text
 social-platform/
-├── apps/api   # NestJS 11 · Apollo Server 5 (code-first) · Prisma 6 · Redis
-├── apps/web   # React 19 · Vite 8 (Rolldown) · Apollo Client 4 · HeroUI v3
-└── turbo.json # оркестрация: codegen фронта зависит от schema.gql бэка
+├── apps/api        # NestJS 11 · Apollo Server 5 (code-first) · Prisma 6 · Redis
+├── apps/web        # React 19 · Vite 8 (Rolldown) · Apollo Client 4 · HeroUI v3
+├── apps/federation # Apollo Federation: 3 subgraph'а + gateway (демонстрация)
+└── turbo.json      # оркестрация: codegen фронта зависит от schema.gql бэка
 ```
 
 Инструменты: Yarn 4 workspaces + Turborepo. Контракт — файл `apps/api/src/schema.gql`:
@@ -25,7 +26,8 @@ main.ts / app.setup.ts    HTTP-обвязка: helmet (CORP cross-origin для 
 app.module.ts             GraphQLModule (Apollo, code-first) + подписки graphql-ws,
                           Throttler на Redis, Pino-логгер, глобальные фильтр/интерсептор
 modules/*                 доменные модули: auth, users, posts, comments, reactions,
-                          notifications, feed, presence, media, health
+                          notifications, feed, presence, media, health, maintenance, outbox
+modules/posts/cqrs/       команды/агрегат/доменные события/обработчики/сага агрегата Post
 prisma/                   PrismaService (PostgreSQL)
 redis/, pubsub/           @Global-модули: ioredis-клиенты и RedisPubSub (PUB_SUB)
 common/                   декораторы (@Auth, @CurrentUser), guards, dataloader,
@@ -59,8 +61,10 @@ common/                   декораторы (@Auth, @CurrentUser), guards, da
   ключу, `commentsByPostId` (ветка треда одним `findMany`). Лента — курсорная
   (`createdAt+id`), для подписок персонализирована по follow-связям.
 - **Уведомления.** Полиморфные: `InterfaceType Notification` + конкретные типы
-  (Follow/Reaction/Comment) — резолвятся по `kind`, доставляются подпиской
-  `newNotification` с фильтром по получателю.
+  (Follow/Reaction/Comment/Mention) — резолвятся по `kind`, доставляются подпиской
+  `newNotification` с фильтром по получателю. Рождаются в одном месте —
+  `NotificationsService.notify/notifyMany` (запись + publish + постановка доставки), которую
+  зовут и слушатель доменных событий, и сага упоминаний.
 - **Медиа.** `uploadAvatar(file: Upload!)`: multipart разворачивает `graphql-upload-minimal`
   (CJS-совместимый; сам `graphql-upload` — ESM-only). Поток пишется на диск `pipeline`'ом
   (ключ `uploads/<userId>/<uuid>.<ext>` — имя клиента в путь не попадает); превышение
@@ -86,11 +90,78 @@ common/                   декораторы (@Auth, @CurrentUser), guards, da
   идемпотентностью (`SET NX delivered:<id>`). **Планировщик** (`@nestjs/schedule`): cron ставит
   задачу с фиксированным `jobId` (дедуп BullMQ = распределённый замок), воркер выполняет один
   раз. **Тренды** — топ хэштегов сырым SQL (`$queryRaw`), кэш в Redis с пересчётом по расписанию.
-  Разрыв «коммит ↔ эмит» сейчас best-effort; гарантию (outbox) добавит этап 6.
+- **CQRS для агрегата `Post`.** Две шины сосуществуют осознанно: лёгкий `event-emitter` для
+  простых агрегатов (follow/react/comment) и полный CQRS (`@nestjs/cqrs`) для самого
+  нагруженного на запись. Запись — `CommandBus` (обработчик владеет транзакцией), чтение —
+  `QueryBus` (`GetFeedQuery`), инварианты и доменные события — `PostAggregate` (`AggregateRoot`,
+  `apply` → `commit`), быстрые in-process реакции — `@EventsHandler` (real-time `postAdded`),
+  оркестрация — **сага** (`@Saga`, `ofType`): `PostCreatedDomainEvent` → `ProcessMentionsCommand`
+  → `MENTION`-уведомления упомянутым (`@username` матчится регистронезависимо, потолок 20 на пост,
+  сам себя не уведомляешь). `PostsService` стал read-only.
+- **Transactional outbox.** Разрыв «коммит ↔ эмит» закрыт: `CreatePostHandler` пишет пост,
+  хэштеги и строку `outbox_events` **в одной транзакции** — либо есть и то и другое, либо ничего.
+  `OutboxRelayer` (`@Interval(1000)`) забирает пачку `SELECT … FOR UPDATE SKIP LOCKED`
+  (`SKIP LOCKED` = соседние инстансы берут разные строки, таблица работает распределённой
+  очередью), ставит fan-out в BullMQ и помечает строки `processed` — всё внутри одной
+  транзакции: упал процесс посередине → откат → строки снова `pending`, повтор безопасен
+  (фиксированный `jobId` дедуплицирует задачу). Ошибка ловится **построчно** и растит `attempts`
+  (после 5 → `failed`): иначе одна ядовитая строка, будучи самой старой, навсегда встала бы в
+  голове очереди. Разобранные строки — журнал, а не данные: почасовой `prune` убирает старше
+  7 дней. Real-time (`postAdded`) намеренно остался best-effort — гарантию нужно давать
+  материализации ленты, а не анимации.
+- **Быстрый путь + гарантия.** Упоминания — durable-данные, но их порождает сага, живущая в
+  памяти. Поэтому relayer ставит из той же outbox-строки ещё и задачу `mentions`. Обе дороги
+  ведут к одной команде, а повтор гасит уникальный `dedupeKey` (`createManyAndReturn` +
+  `skipDuplicates` возвращает только реально вставленные строки, поэтому дубль ничего не
+  публикует). `NULL` не конфликтует с `NULL` в PostgreSQL — уведомления без ключа
+  (комментарий за комментарием) по-прежнему приходят каждый раз.
 - **Наблюдаемость и живучесть.** Pino (reqId из `x-request-id`), GraphQL-aware
   LoggingInterceptor, health для оркестраторов (REST + GraphQL), graceful shutdown,
   глобальный exception-фильтр c единым форматом ошибок (детали валидации — в `extensions`),
   обработчик `unhandledRejection` как защитная сетка.
+
+## Федерация (`apps/federation`)
+
+Отдельное демонстрационное развёртывание **рядом** с монолитом, а не вместо него: монолит
+остаётся рабочим API фронтенда, федерация показывает, как тот же граф разрезается на
+независимо разворачиваемые части.
+
+```text
+src/apps/users/       владелец User: @key(id), @ResolveReference, Query.user/me   :4001
+src/apps/posts/       владелец Post/Comment; расширяет чужой User полем posts      :4002
+src/apps/engagement/  владелец Reaction; расширяет чужой Post полями reactionCount :4003
+src/apps/gateway/     ApolloGatewayDriver + IntrospectAndCompose → supergraph      :4000
+src/libs/common/      Prisma, JWT-guard, @CurrentUser, фабрика subgraph-модуля
+```
+
+- **Механика сшивки.** Сущность помечается `@key(fields: "id")`. Владелец умеет отдать её по
+  ключу (`@ResolveReference`). Чужой subgraph объявляет тот же тип с `@extends` и `@external id`
+  и **дописывает свои поля** — `@apollo/subgraph` сам отдаёт представление как есть, поэтому
+  reference-резолвер там не нужен. Обратно: `Post.author` возвращает не объект, а **ссылку**
+  `{ __typename: "User", id }` — остальное gateway достроит у владельца. Итог: `post { author
+  { username } reactionCount }` собирается из трёх процессов.
+- **DataLoader обязателен.** Gateway присылает представления **пачкой** в один `_entities`,
+  и reference-резолвер зовётся по разу на представление — без батчинга это N+1 на ровном месте.
+  Лоадеры создаются на запрос в фабрике контекста.
+- **Reference-резолвер без параметр-декораторов.** `__resolveReference` получает
+  `(reference, context, info)`; у него нет слота `args`, поэтому `@Context()` вернул бы `info`.
+  Nest биндит метод напрямую, когда декораторов нет, — на этом и держится доступ к лоадерам.
+- **Аутентификация.** Gateway лишь **пробрасывает** `Authorization` (`RemoteGraphQLDataSource.
+  willSendRequest`), а токен проверяет каждый subgraph сам: gateway не должен быть точкой
+  доверия, иначе прямой запрос в subgraph минует авторизацию.
+- **Разрезанный граф опаснее целого.** Supergraph замкнут циклом `Post.author → User.posts → …`,
+  и звенья живут в разных subgraph'ах: на каждом уровне gateway делает новый `_entities`-запрос,
+  а ответ растёт экспоненциально. Поэтому `depthLimit` стоит и на gateway, и на каждом subgraph'е.
+  `User.posts` отдаёт только `PUBLIC` (зрителя на этом пути нет, а в монолите такого поля не
+  существует — иначе это была бы новая утечка) и ограничен потолком **на каждого автора** через
+  `row_number()`: общий `take` обрезал бы выборку целиком, и посты «тихого» автора пропали бы
+  из-за плодовитого соседа. Subgraph'ы слушают loopback — наружу смотрит только gateway.
+- **Честные ограничения.** Все subgraph'ы читают одну БД — здесь режется **граф**, а не
+  хранилище. `IntrospectAndCompose` привязывает старт gateway к доступности всех subgraph'ов
+  (в проде — заранее собранный supergraph или managed federation). Главное: **подписки в
+  федерации не работают** через классический `@apollo/gateway` — их умеет Apollo Router либо их
+  выносят мимо gateway. Для приложения, настолько завязанного на подписки, это делает федерацию
+  решением «по необходимости», а не «по умолчанию» — потому монолит и остался основным API.
 
 ## Фронтенд (`apps/web`)
 
@@ -170,8 +241,20 @@ update дописывает в `Post.comments` (дедуп) → оптимист
 у остальных зрителей поста то же делает подписка `commentAdded`; автор поста получает
 `newNotification`.
 
-**Публикация поста (fan-out):** `createPost` → эмит `post.created` → `FanoutListener`:
-(1) `publish postAdded` — онлайн-подписчики видят пост в ленте мгновенно (WS); (2) задача
-`feed-fanout` → `FeedFanoutProcessor` разносит id поста по `feed:<подписчик>` в Redis (и в ленту
-автора). Следующее чтение `feed` берёт готовый список из набора; новый подписчик без набора
-получает бэкофилл из БД, который заодно наполняет Redis.
+**Публикация поста (CQRS + outbox + fan-out):** `createPost` → `CommandBus` →
+`CreatePostHandler`: одна транзакция пишет пост, хэштеги и строку `outbox_events`. После
+коммита агрегат публикует `PostCreatedDomainEvent`, и дальше расходятся три дороги:
+(1) `@EventsHandler` → `publish postAdded` — онлайн-подписчики видят пост мгновенно (WS,
+best-effort); (2) **сага** → `ProcessMentionsCommand` → `MENTION`-уведомления упомянутым;
+(3) `OutboxRelayer` (раз в секунду, `FOR UPDATE SKIP LOCKED`) → задача `feed-fanout` →
+`FeedFanoutProcessor` разносит id поста по `feed:<подписчик>` в Redis (и в ленту автора) —
+**гарантированно**, потому что событие лежит в той же транзакции, что и пост. Следующее чтение
+`feed` (через `QueryBus`) берёт готовый список из набора; новый подписчик без набора получает
+бэкофилл из БД, который заодно наполняет Redis.
+
+**Кросс-subgraph-запрос (федерация):** `user(username) { username posts { content } }` →
+gateway спрашивает `users` (получает `User` с `username` и ключом `id`) → шлёт представление
+`{ __typename: "User", id }` в `posts` → там field-резолвер `posts` достраивает список
+(батч через DataLoader). Обратно: `post { author { username } }` — `posts` вернёт ссылку,
+gateway резолвит её через `@ResolveReference` в `users`. `Authorization` едет с каждым
+подзапросом; проверяет его subgraph, а не gateway.

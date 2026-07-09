@@ -35,6 +35,14 @@ export function NotificationItem({
           text={`@${n.actor.username} прокомментировал ваш пост`}
         />
       );
+    case "MentionNotification":
+      return (
+        <Row
+          avatar={n.actor.avatarUrl}
+          name={n.actor.username}
+          text={`@${n.actor.username} упомянул вас в посте`}
+        />
+      );
     default:
       return null;
   }

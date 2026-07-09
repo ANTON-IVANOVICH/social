@@ -1,40 +1,30 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { InjectQueue } from "@nestjs/bullmq";
 import { OnEvent } from "@nestjs/event-emitter";
-import { Queue } from "bullmq";
 import { RedisPubSub } from "graphql-redis-subscriptions";
-import { PrismaService } from "../../prisma/prisma.service";
 import { PUB_SUB } from "../../pubsub/pubsub.module";
 import { UserFollowedEvent } from "../../events/user-followed.event";
 import { PostReactedEvent } from "../../events/post-reacted.event";
 import { CommentCreatedEvent } from "../../events/comment-created.event";
-import { NOTIFICATIONS_QUEUE } from "./notifications.constants";
+import { NotificationsService } from "./notifications.service";
 
-// Все побочные эффекты доменных событий: real-time publish (для открытых экранов),
-// запись уведомления в БД и постановка асинхронной доставки (email/push) в очередь.
-// Сервисы-эмитенты про это ничего не знают — развязка.
+// Побочные эффекты доменных событий: публикация «событий страницы» в подписки и
+// рождение уведомления через NotificationsService. Сервисы-эмитенты про это
+// ничего не знают — развязка. Пост создаётся через CommandBus, и его событие
+// живёт в CQRS-шине, а не здесь: у него свой обработчик и своя сага.
 @Injectable()
 export class NotificationListener {
   constructor(
-    private readonly prisma: PrismaService,
     @Inject(PUB_SUB) private readonly pubsub: RedisPubSub,
-    @InjectQueue(NOTIFICATIONS_QUEUE) private readonly queue: Queue,
+    private readonly notifications: NotificationsService,
   ) {}
 
   @OnEvent(UserFollowedEvent.EVENT)
   async onUserFollowed(e: UserFollowedEvent): Promise<void> {
-    const notification = await this.prisma.notification.create({
-      data: {
-        recipientId: e.followingId,
-        actorId: e.followerId,
-        kind: "FOLLOW",
-      },
-    });
-    await this.pubsub.publish("newNotification", {
-      newNotification: notification,
+    await this.notifications.notify({
       recipientId: e.followingId,
+      actorId: e.followerId,
+      kind: "FOLLOW",
     });
-    await this.enqueueDelivery(notification.id);
   }
 
   @OnEvent(PostReactedEvent.EVENT)
@@ -44,19 +34,12 @@ export class NotificationListener {
       reactionAdded: { postId: e.postId, userId: e.actorId, type: e.type },
     });
     if (e.actorId === e.postAuthorId) return; // на свой пост не уведомляем
-    const notification = await this.prisma.notification.create({
-      data: {
-        recipientId: e.postAuthorId,
-        actorId: e.actorId,
-        kind: "REACTION",
-        postId: e.postId,
-      },
-    });
-    await this.pubsub.publish("newNotification", {
-      newNotification: notification,
+    await this.notifications.notify({
       recipientId: e.postAuthorId,
+      actorId: e.actorId,
+      kind: "REACTION",
+      postId: e.postId,
     });
-    await this.enqueueDelivery(notification.id);
   }
 
   @OnEvent(CommentCreatedEvent.EVENT)
@@ -64,28 +47,11 @@ export class NotificationListener {
     // событие «на странице поста» — всегда (комментарий появляется у зрителей)
     await this.pubsub.publish("commentAdded", { commentAdded: e.comment });
     if (e.comment.authorId === e.postAuthorId) return; // свой комментарий — без уведомления
-    const notification = await this.prisma.notification.create({
-      data: {
-        recipientId: e.postAuthorId,
-        actorId: e.comment.authorId,
-        kind: "COMMENT",
-        postId: e.comment.postId,
-      },
-    });
-    await this.pubsub.publish("newNotification", {
-      newNotification: notification,
+    await this.notifications.notify({
       recipientId: e.postAuthorId,
+      actorId: e.comment.authorId,
+      kind: "COMMENT",
+      postId: e.comment.postId,
     });
-    await this.enqueueDelivery(notification.id);
-  }
-
-  // jobId = notificationId: повторное событие не создаст дубль задачи доставки.
-  // BullMQ запрещает ":" в кастомном jobId — используем "-".
-  private enqueueDelivery(notificationId: string): Promise<unknown> {
-    return this.queue.add(
-      "deliver",
-      { notificationId },
-      { jobId: `deliver-${notificationId}` },
-    );
   }
 }
